@@ -126,7 +126,7 @@ void setRelays()
   }
 }
 
-void pwm_bit_bang(int freq, int pin, int duty_cycle) {
+void pwm_bit_bang_micro(int freq, int pin, int duty_cycle) {
   // Calculate the period and high time of the PWM signal.
   int period = 1000000 / freq;
   int high_time = period * duty_cycle / 100;
@@ -146,6 +146,28 @@ void pwm_bit_bang(int freq, int pin, int duty_cycle) {
     start_time = micros();
   }  
 }
+
+void pwm_bit_bang_millis(int freq, int pin, int duty_cycle) {
+  // Calculate the period and high time of the PWM signal in milliseconds.
+  int period = 1000 / freq;
+  int high_time = period * duty_cycle / 100;
+  int low_time = period - high_time;
+
+  // Start a timer to track the elapsed time in milliseconds.
+  unsigned long start_time = millis();
+
+  // If the high time has elapsed, set the pin low.
+  if (millis() - start_time >= high_time) {
+    digitalWrite(pin, LOW);
+  }
+
+  // If the low time has elapsed, set the pin high.
+  if (millis() - start_time >= period) {
+    digitalWrite(pin, HIGH);
+    start_time = millis();
+  }
+}
+
 
 void loadConfiguration(const char *filename, Config &config)
 {
@@ -395,6 +417,7 @@ void loop()
       break;
     case 6: // Freq (output)
       pinMode(DIGI_OUTpin, OUTPUT);
+      ledcAttachPin(DIGI_OUTpin, ledChannel);
       break;
     case 7:
       break;
@@ -459,46 +482,31 @@ void loop()
     upper_value = pdo1.load();
     lower_value = pdo2.load();
     freq_value = (upper_value << 8) | lower_value;
+    upper_value = pdo3.load();
+    lower_value = pdo4.load();
+    duty = (upper_value << 8) | lower_value;
     // Freq output
     if (freq_value != freq_value_last)
     {
+      // If Frequency has been changed!
       freq_value_last = freq_value;
-      //  Why is this block here? would only get hit once..
-      // if (freq_value < 200)
-      // {         
-      //   upper_value = pdo3.load();
-      //   lower_value = pdo4.load();
-      //   duty = (upper_value << 8) | lower_value;
-      //   pwm_bit_bang(freq_value,DIGI_OUTpin,duty);
-      //   Serial.println("Frequency less than 200");
-      //   Serial.printf("Frequency: %d\n",freq_value);
-      //   Serial.printf("Duty: %d\n", duty);
-      // }
-      // else
-      // {
       ledcDetachPin(DIGI_OUTpin);
       ledcSetup(ledChannel, freq_value, resolution);
       ledcAttachPin(DIGI_OUTpin, ledChannel);
-      // }
+      // ledcChangeFrequency(DIGI_OUTpin,freq_value,resolution);
     }
     if (freq_value >= 200)
     {
-      // combine data bytes 3 and 4 from PDO
-      upper_value = pdo3.load();
-      lower_value = pdo4.load();
-      duty = (upper_value << 8) | lower_value;
+      // High Speed Freq
       ledcWrite(ledChannel, duty); // PDO byte 3 4 buffer will set PWM here.
-      Serial.println("Frequency greater than 200");
-      Serial.printf("Frequency: %d\n",freq_value);
-      Serial.printf("Duty: %d\n", duty);
+      // Serial.println("Frequency greater than 200");
+      // Serial.printf("Frequency: %d\n",freq_value);
+      // Serial.printf("Duty: %d\n", duty);
     }
     else if (freq_value < 200)
     { 
-      // Moved down here so it gets hit every loop         
-      upper_value = pdo3.load();
-      lower_value = pdo4.load();
-      duty = (upper_value << 8) | lower_value;
-      pwm_bit_bang(freq_value,DIGI_OUTpin,duty);
+      // Low Speed Freq
+      pwm_bit_bang_millis(freq_value,DIGI_OUTpin,duty);
     }
     break;
   case 7:
