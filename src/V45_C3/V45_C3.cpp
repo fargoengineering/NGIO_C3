@@ -36,6 +36,7 @@ const int ESP_D5 = 2; // miso io13b
 
 // Global atomic variables SLOT TYPE and DATA OUT
 std::atomic<int> data_out_atom(0);
+std::atomic<int> data2_out_atom(0);
 std::atomic<int> slot_type_atom(0);
 std::atomic<int> ble_state_atom(0);
 std::atomic<int> pdo1(0);
@@ -64,6 +65,30 @@ const int ledChannel = 0;
 const int resolution = 12;
 
 unsigned long previousMillis = 0;
+
+///////
+//PWM INPUT VARIABLES
+int pwmPin = 0; 
+
+unsigned long high1 = 0;
+unsigned long high2 = 0;
+unsigned long low = 0;
+unsigned long highdiff = 0;
+
+// unsigned long currentMillis = 0;
+unsigned long prevMillis = 0;
+int printFreqms = 1000; // 1 second. 
+
+// float dutyCycle = 0.0;
+// float frequency = 0.0;
+unsigned int dutyCycle = 0;
+unsigned int frequency = 0;
+
+int analogval = 0;
+int analoglimit = 800;
+bool ishigh = false;
+/////////////
+
 
 int upper_value = 0;
 int lower_value = 0;
@@ -243,6 +268,7 @@ void task_process_buffer(void *pvParameters)
     uint16_t checkSumFromS3 = spi_slave_rx_buf[6] + (spi_slave_rx_buf[7] << 8);
     uint16_t checkSumOfS3 = crc.checksumCalculator(spi_slave_rx_buf, 6);
     uint16_t data = data_out_atom.load();
+    uint16_t data2 = data2_out_atom.load();
     int command = 0;
     bool valid_data = false;
 
@@ -252,8 +278,8 @@ void task_process_buffer(void *pvParameters)
       spi_slave_tx_buf[0] = spi_slave_rx_buf[0];
       spi_slave_tx_buf[1] = data;
       spi_slave_tx_buf[2] = data >> 8;
-      spi_slave_tx_buf[3] = spi_slave_rx_buf[3]; // data2
-      spi_slave_tx_buf[4] = spi_slave_rx_buf[4]; // data2 >> 8
+      spi_slave_tx_buf[3] = data2;
+      spi_slave_tx_buf[4] = data2 >> 8;
       spi_slave_tx_buf[5] = spi_slave_rx_buf[5]; // data3
 
       uint16_t checkSumOfC3 = crc.checksumCalculator(spi_slave_tx_buf, 6);
@@ -300,10 +326,8 @@ void task_process_buffer(void *pvParameters)
 void setup()
 {
   Serial.begin(115200);
-
-  slave.setDataMode(SPI_MODE0);
-
-  // loadConfiguration(filename, config);
+  // TODO: Implement JSON to remember previous slot type...
+  loadConfiguration(filename, config);
 
   // slot_type = config.slot_type_json;
   // slot_number = config.slot_number_json;
@@ -313,14 +337,19 @@ void setup()
   //   RGBled.setBrightness(128);
   //   RGBled.show();
   // }
+
+  // Pin Configuration
   pinMode(SLOT_TP1pin, OUTPUT);
   pinMode(BYPASSpin, OUTPUT);
   pinMode(RELAYpin, OUTPUT);
 
+  // SPI Slave setup
+  slave.setDataMode(SPI_MODE0);
   gpio_set_drive_capability((gpio_num_t)ESP_D5, GPIO_DRIVE_CAP_1);
   slave.begin(SPI2_HOST, ESP_D1, ESP_D5, ESP_D2, ESP_D4); // SCLK, MISO, MOSI, SS
   set_buffer();
 
+  // Create background tasks/threads (SPI R/W)
   xTaskCreatePinnedToCore(task_wait_spi, "task_wait_spi", 2048, NULL, 2, &task_handle_wait_spi, CORE_TASK_SPI_SLAVE);
   xTaskNotifyGive(task_handle_wait_spi);
   xTaskCreatePinnedToCore(task_process_buffer, "task_process_buffer", 2048, NULL, 2, &task_handle_process_buffer, CORE_TASK_PROCESS_BUFFER);
@@ -328,9 +357,8 @@ void setup()
 
 void loop()
 {
-  // Serial.println("Loop");
   // perform atomic operations
-  digitalWrite(SLOT_TP1pin, HIGH);
+  digitalWrite(SLOT_TP1pin, !digitalRead(SLOT_TP1pin));
   first_run = first_run_atom.load();
   slot_type = slot_type_atom.load();
   ble_state = ble_state_atom.load();
@@ -387,9 +415,15 @@ void loop()
     RGBled.show();
   }
   unsigned int data;
+  unsigned int data2;
 
+  // Will hit if slot type is updated
   if (first_run == 1)
   {
+    // Store Slot type 
+    config.slot_type_json = slot_type;
+    saveConfiguration(filename,config);
+
     RGBled.setPixelColor(0, RGBled.Color(0, 0, 0));
     RGBled.setBrightness(0);
     RGBled.show();
@@ -400,51 +434,42 @@ void loop()
       pinMode(DIGI_OUTpin, OUTPUT);
       break;
     case 2: // Digital Input
-      // set data in py ui and
       pinMode(SLOT_IO0pin, INPUT);
       break;
     case 3: // Analog Input
       pinMode(SLOT_IO0pin, INPUT);
       break;
-    case 4: // Analog Output
-      // dac
+    case 4: // Analog Output / DAC
       Wire.begin(SDA, SCL);
       dac.begin(0x60);
       break;
     case 5: // PWM (input)
-      my_pwm.begin(true); // method 1
-      pinMode(0,INPUT);   // method 2
+      my_pwm.begin(true); // method 1 (digital)
+      pinMode(0,INPUT);   // method 2 (analog)
       break;
-    case 6: // Freq (output)
+    case 6: // Frequency (output)
       pinMode(DIGI_OUTpin, OUTPUT);
       ledcAttachPin(DIGI_OUTpin, ledChannel);
       break;
-    case 7:
+    case 7: // n/a
       break;
-    case 8:
+    case 8: // n/a
       break;
-    case 9:
-      pinMode(DIGI_OUTpin, OUTPUT);
+    case 9: // test bit bang output
+      // pinMode(DIGI_OUTpin, OUTPUT);
+      pinMode(pwmPin,INPUT);
       break;
-    case 10:
+    case 10: // ?
       Wire.begin(SDA, SCL);
       dac.begin(0x60);
       pinMode(DIGI_OUTpin, OUTPUT);
       break;
-
     default:
-      // config.slot_type_json = 1;
-      // config.slot_number_json = 0;
-      // saveConfiguration(filename, config);
-      // delay(1000);
-      // ESP.restart();
       break;
     }
+    // Mark First run as complete
     first_run_atom.store(0);
   }
-
-  unsigned long pulseWidth1;
-  float dutyCycle;
 
   switch (slot_type)
   {
@@ -454,11 +479,12 @@ void loop()
     data = digitalRead(DIGI_OUTpin);
     break;
   case 2:
-    // Do an analog read, set threshold on pi master. if read above threshold, digital high, else low.
+    // Do an analog read, set threshold on pi master. if read above threshold, digital high, else low (handled on py side)
     data = analogRead(SLOT_IO0pin); // pdo 2 output
     break;
   case 3:
     data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
+    // Serial.printf("a2d count: %d\n",data);
     break;
   case 4:
     // data = 4000;
@@ -469,11 +495,8 @@ void loop()
     data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
     break;
   case 5:
+    // digital PWM
     data = my_pwm.getValue(); // to pdo1 and 2, good
-    // pulseWidth1 = pulseIn(0,HIGH);
-    // dutyCycle = (float)pulseWidth1 / 1000.0f;
-    // data = int(dutyCycle);
-    // Serial.printf("PWM Input: %d\n",dutyCycle);
     break;
   case 6:
     // freq value pdo1 and pdo2
@@ -485,6 +508,8 @@ void loop()
     upper_value = pdo3.load();
     lower_value = pdo4.load();
     duty = (upper_value << 8) | lower_value;
+    data = freq_value;
+    data2 = duty;
     // Freq output
     if (freq_value != freq_value_last)
     {
@@ -493,15 +518,12 @@ void loop()
       ledcDetachPin(DIGI_OUTpin);
       ledcSetup(ledChannel, freq_value, resolution);
       ledcAttachPin(DIGI_OUTpin, ledChannel);
-      // ledcChangeFrequency(DIGI_OUTpin,freq_value,resolution);
     }
     if (freq_value >= 200)
     {
       // High Speed Freq
       ledcWrite(ledChannel, duty); // PDO byte 3 4 buffer will set PWM here.
       // Serial.println("Frequency greater than 200");
-      // Serial.printf("Frequency: %d\n",freq_value);
-      // Serial.printf("Duty: %d\n", duty);
     }
     else if (freq_value < 200)
     { 
@@ -514,16 +536,45 @@ void loop()
     break;
   case 8:
     data = 8000;
+    data2 = 9000;
     // config.slot_type_json = slot_type;
     // saveConfiguration(filename, config);
     // first_run = true;
     delay(500);
     break;
   case 9:
-    digitalWrite(DIGI_OUTpin, HIGH);
-    delay(10);
-    digitalWrite(DIGI_OUTpin, LOW);
-    delay(5);
+    // TEST: PWM input based on analogRead() - 10-26-2023
+    
+    upper_value = pdo1.load();
+    lower_value = pdo2.load();
+    analoglimit = (upper_value << 8) | lower_value;
+    analogval = analogRead(pwmPin);
+    ishigh = (analogval > analoglimit);
+
+    if(ishigh)
+    {
+        high2 = micros();
+        if(high1 > 0 and low > 0)
+        {
+            highdiff = high2 - high1;
+            frequency = (1000000 / highdiff); // Converging Micro seconds to frequency per second.
+            dutyCycle = ((low - high1) * 100) / highdiff;
+        }
+        low = 0;
+        high1 = high2;
+    }
+    // low
+    else
+    {
+        low = micros();
+    }
+    currentMillis = millis();
+    if(currentMillis - prevMillis >= printFreqms)
+    {
+        prevMillis = currentMillis; 
+        data = frequency;
+        data2 = dutyCycle;
+    }
     break;
   case 10:
     digitalWrite(DIGI_OUTpin, HIGH);
@@ -535,7 +586,10 @@ void loop()
     data = 0;
     break;
   }
+
+  // Set PDO Output data
   data_out_atom.store(data);
+  data2_out_atom.store(data2);
 
   // BLE OTA check
   if (ble_state == 1 && ble_enabled == false)
@@ -562,6 +616,4 @@ void loop()
 
   // handle relays
   setRelays();
-  delayMicroseconds(100);
-  digitalWrite(SLOT_TP1pin, LOW);
 } 
