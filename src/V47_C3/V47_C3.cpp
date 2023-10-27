@@ -15,6 +15,7 @@
 #include <WiFi.h>
 #include <fei_pwm.h>
 
+int loopCount = 0;
 
 const char VERSION[] = "V4_C3";
 const char *filename = "/config.txt";
@@ -504,9 +505,9 @@ void loop()
       lower_value = pdo2.load();
       analoglimit = (upper_value << 8) | lower_value;
       GetPWMDetails(SLOT_IO0pin,analoglimit);
-      Serial.printf("threshold: %d\n",analoglimit);
-      Serial.printf("duty: %d\n",dutyCycle);
-      Serial.printf("frequency: %d\n",frequency);
+      // Serial.printf("threshold: %d\n",analoglimit);
+      // Serial.printf("duty: %d\n",dutyCycle);
+      // Serial.printf("frequency: %d\n",frequency);
       data = dutyCycle;
       data2 = frequency;
       break;
@@ -627,5 +628,17 @@ void loop()
 
     // handle relays
     setRelays();
+
+
+    loopCount++;
+
+    currentMillis = millis();
+    if(currentMillis - prevMillis >= printFreqms)
+    {
+        Serial.print("Loop per second: ");
+        Serial.println(loopCount);
+        loopCount = 0;
+        prevMillis = currentMillis;
+    }
   } 
 }
