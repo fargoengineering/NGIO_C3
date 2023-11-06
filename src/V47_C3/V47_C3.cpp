@@ -426,6 +426,7 @@ void loop()
       }
     }
   }
+  
   int data;
   int data2;
 
@@ -435,7 +436,6 @@ void loop()
     // Store Slot type
     config.slot_type_json = slot_type;
     saveConfiguration(filename, config);
-
     // Set pin 19
     if(slot_type!=6){
       digitalWrite(DIGI_OUTpin,LOW);
@@ -493,36 +493,27 @@ void loop()
     // Serial.printf("a2d count: %d\n",data);
     break;
   case 4:
-    // Added tracking concept - DAC Output will auto increment until input matches desired output    
-    // Should make this configurable from etherCAT - set data5 either 1 or 0 to control
+    // Added tracking concept - DAC Output will auto increment until input matches desired output 
     upper_value = pdo1.load();
     lower_value = pdo2.load();
     tracking_flag = pdo4.load();
     val = (upper_value << 8) | lower_value;
     if (tracking_flag==1){
-      // Serial.print("DAC TRACKING: ");
       if (val != previous_dac_val){
-        // Serial.print("\n\nNEW VAL\n\n");
         previous_dac_val = val;
         dac_boost = 0;
       }
       int final_val = val+dac_boost;
       if(final_val < 0){final_val = 0;}else if(final_val > 4096){final_val = 4095;}
-      // Serial.printf("Setting DAC to: %d\n",final_val);
       dac.setVoltage(final_val, false);
       data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
       if (data < val){
-        // Serial.printf("Expected: %d, Actual: %d - RAISING OUTPUT\n",val,data);
         dac_boost++;
       }else if(data > val){
-        // Serial.printf("Expected: %d, Actual: %d - LOWERING OUTPUT\n",val,data);
         dac_boost--;
-      }else{
-        // Serial.printf("Expected: %d, Actual: %d - OUTPUT ACHEIVED\n",val,data);
       }
     }
     else{
-      // Serial.println("NORMAL DAC");
       if(val < 0){val = 0;}else if(val > 4096){val = 4096;}
       dac_boost = 0;
       dac.setVoltage(val,false);
@@ -531,14 +522,10 @@ void loop()
     break;
   case 5:
     // digital PWM
-    // data = my_pwm.getValue(); // to pdo1 and 2, good
     upper_value = pdo1.load();
     lower_value = pdo2.load();
     analoglimit = (upper_value << 8) | lower_value;
     GetPWMDetails(SLOT_IO0pin);
-    // Serial.printf("threshold: %d\n",analoglimit);
-    // Serial.printf("duty: %d\n",dutyCycle);
-    // Serial.printf("frequency: %d\n",frequency);
     data = dutyCycle;
     data2 = frequency;
     break;
@@ -610,34 +597,4 @@ void loop()
 
   // handle relays
   setRelays();
-
-  // loopCount++;
-
-  //  I2c Scan: found one device at 96 (0x60)
-  // byte count=0;
-  // for (byte i = 8; i < 120; i++)
-  // {
-  //   Wire.beginTransmission (i);          // Begin I2C transmission Address (i)
-  //   if (Wire.endTransmission () == 0)  // Receive 0 = success (ACK response) 
-  //   {
-  //     Serial.print ("Found address: ");
-  //     Serial.print (i, DEC);
-  //     Serial.print (" (0x");
-  //     Serial.print (i, HEX);     // PCF8574 7 bit address
-  //     Serial.println (")");
-  //     count++;
-  //   }
-  // }
-  // Serial.print ("Found ");      
-  // Serial.print (count, DEC);        // numbers of devices
-  // Serial.println (" device(s).");
-
-  // currentMillis = millis();
-  // if (currentMillis - prevMillis >= printFreqms)
-  // {
-  //   Serial.print("Loop per second: ");
-  //   Serial.println(loopCount);
-  //   loopCount = 0;
-  //   prevMillis = currentMillis;
-  // }
 }
