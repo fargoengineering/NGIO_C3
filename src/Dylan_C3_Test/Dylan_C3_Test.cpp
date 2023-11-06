@@ -2,7 +2,8 @@
 #include "wiring_private.h"
 #include "pins_arduino.h"
 #include <hal/cpu_hal.h>
-#include "driver/gpio.h"
+#include <driver/gpio.h>
+#include <driver/adc.h>
 
 int pwmChannel = 0;   // Selects channel 0
 int frequence = 1000; // PWM frequency of 1 KHz
@@ -27,7 +28,7 @@ int printFreqms = 3000; // 1 second.
 
 bool get_digital_from_analog(int pin, uint16_t limit)
 {
-    if (analogRead(pin) >= limit)
+    if (adc1_get_raw(ADC1_CHANNEL_0) >= limit)
     {
         return true;
     }
@@ -73,7 +74,11 @@ void GetPWMDetails_FEI(byte pin)
         dutyCycle = get_digital_from_analog(pin,threashold) ? 100 : 0; // HIGH == 100%,  LOW = 0%
       
 
-    dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
+    // Inverted 
+    // dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
+    
+    // Normal
+    dutyCycle = (100 * lowTime) / (highTime + lowTime); // highTime as percentage of total cycle time
     frequenceInp = (1 * microsecForsec) / (highTime + lowTime);
     high = highTime;
     low = lowTime;
@@ -116,24 +121,30 @@ void setup()
     pinMode(19,OUTPUT);
     pinMode(pwmPinInput, INPUT);
 
+    adc1_config_width(ADC_WIDTH_12Bit);
+    adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11);// using GPIO 36 battery volts
+
     digitalWrite(19,LOW);
 }
 
 void loop()
 {
+    int val = adc1_get_raw(ADC1_CHANNEL_0);
+
     GetPWMDetails_FEI(pwmPinInput);
     // digitalWrite(1,!digitalRead(1));
-    int val = analogRead(pwmPinInput);
-    // int val = digitalRead(pwmPinInput);
+    // int val = analogRead(pwmPinInput);
+    int val1 = digitalRead(pwmPinInput);
     // Serial.println(val);
 
     currentMillis = millis();
 
     // if (currentMillis - prevMillis >= printFreqms)
     // {
-    // Serial.print("Analog In value: ");
-    Serial.print("Digital In Value: ");
+    Serial.print("Analog In value: ");
     Serial.print(val);        
+    Serial.print("Digital In Value: ");
+    Serial.print(val1);        
     Serial.print(" Freq: ");
     Serial.print(frequenceInp);
     Serial.print(" DC: ");
@@ -143,6 +154,6 @@ void loop()
     Serial.print(" Low: ");
     Serial.println(low);
 
-    prevMillis = currentMillis;
+    // prevMillis = currentMillis;
     // }
 }

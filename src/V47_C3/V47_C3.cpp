@@ -160,7 +160,7 @@ void setRelays()
   }
 }
 
-void GetPWMDetails(byte pin)
+void GetPWMDetails_FEI(byte pin,int threshold)
 {
   // Using default pulseIn, no threshold needed
   unsigned long highTime = pulseIn(pin, HIGH, 50000UL); // 50 millisecond timeout
@@ -168,9 +168,13 @@ void GetPWMDetails(byte pin)
 
   // pulseIn() returns zero on timeout
   if (highTime == 0 || lowTime == 0)
-    dutyCycle = digitalRead(pin) ? 100 : 0; // HIGH == 100%,  LOW = 0%
+    dutyCycle = get_digital_from_analog(pin,threshold) ? 100 : 0; // HIGH == 100%,  LOW = 0%
 
-  dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
+  // Inverted 
+  // dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
+  
+  // Normal
+  dutyCycle = (100 * lowTime) / (highTime + lowTime);
   frequency = (1 * microsecForsec) / (highTime + lowTime);
   high = highTime;
   low = lowTime;
@@ -403,8 +407,7 @@ void loop()
   // // handle LED status
   unsigned long currentMillis = millis();
 
-  // this if/else is a big hit on loop frequency
-  // but why exactly? the rgbled? seems like it......
+
   if (ble_enabled)
   {
     if (currentMillis - previousMillis >= 500)
@@ -426,7 +429,7 @@ void loop()
       }
     }
   }
-  
+
   int data;
   int data2;
 
@@ -525,7 +528,7 @@ void loop()
     upper_value = pdo1.load();
     lower_value = pdo2.load();
     analoglimit = (upper_value << 8) | lower_value;
-    GetPWMDetails(SLOT_IO0pin);
+    GetPWMDetails_FEI(SLOT_IO0pin,analoglimit);
     data = dutyCycle;
     data2 = frequency;
     break;

@@ -2,6 +2,7 @@
 #include "wiring_private.h"
 #include "pins_arduino.h"
 #include <hal/cpu_hal.h>
+#include <driver/adc.h>
 
 // int _pwmChannel = 0; // Selects channel 0
 // int _frequence = 1000; // PWM frequency of 1 KHz
@@ -24,7 +25,7 @@
 
 bool get_digital_from_analog(int pin, uint16_t limit)
 {
-    if(analogRead(pin) >= limit)
+    if(adc1_get_raw(ADC1_CHANNEL_0) >= limit)
     {
         return true;
     }
