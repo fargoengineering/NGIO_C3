@@ -55,7 +55,6 @@ PWM my_pwm(SLOT_IO0pin);
 
 const int pwmResolution = 10;
 int freq_value = 0;
-;
 int freq_value_last = 0;
 int pwm_value = 0;
 int pwm_value_last = 0;
@@ -504,9 +503,9 @@ void loop()
       lower_value = pdo2.load();
       analoglimit = (upper_value << 8) | lower_value;
       GetPWMDetails(SLOT_IO0pin,analoglimit);
-      Serial.printf("threshold: %d\n",analoglimit);
-      Serial.printf("duty: %d\n",dutyCycle);
-      Serial.printf("frequency: %d\n",frequency);
+      // Serial.printf("threshold: %d\n",analoglimit);
+      // Serial.printf("duty: %d\n",dutyCycle);
+      // Serial.printf("frequency: %d\n",frequency);
       data = dutyCycle;
       data2 = frequency;
       break;

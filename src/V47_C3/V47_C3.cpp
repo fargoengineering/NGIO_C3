@@ -37,16 +37,18 @@ const int ESP_D4 = 4; // ss io13a
 const int ESP_D5 = 2; // miso io13b
 
 // Global atomic variables SLOT TYPE and DATA OUT
-std::atomic<int> data_out_atom(0);
-std::atomic<int> data2_out_atom(0);
-std::atomic<int> slot_type_atom(0);
-std::atomic<int> ble_state_atom(0);
-std::atomic<int> pdo1(0);
-std::atomic<int> pdo2(0);
-std::atomic<int> pdo3(0);
-std::atomic<int> pdo4(0);
-std::atomic<int> relay_state_atom(0);
-std::atomic<bool> first_run_atom(0);
+std::atomic<int> data_out_atom(0);    // Data OUT
+std::atomic<int> data2_out_atom(0);   // Data OUT
+std::atomic<int> slot_type_atom(0);   // Slot Type Byte (Aux)
+std::atomic<int> ble_state_atom(0);   // BLE State Byte (Aux)
+std::atomic<int> pdo1(0);             // PDO 1 Output
+std::atomic<int> pdo2(0);             // PDO 2 Output
+std::atomic<int> pdo3(0);             // PDO 3 Output
+std::atomic<int> pdo4(0);             // PDO 4 Output
+std::atomic<int> relay_state_atom(0); // Holds state of the relays
+std::atomic<bool> first_run_atom(0);  // Marks run setup flag
+std::atomic<int> HW_Version_atom(0);  // Hardware Version
+std::atomic<int> SW_Version_atom(0);  // Software Version
 
 Adafruit_MCP4725 dac;
 #define DAC_RESOLUTION (12)
@@ -56,7 +58,7 @@ PWM my_pwm(SLOT_IO0pin);
 
 const int pwmResolution = 10;
 int freq_value = 0;
-;
+int tracking_flag = 0;
 int freq_value_last = 0;
 int pwm_value = 0;
 int pwm_value_last = 0;
@@ -65,12 +67,13 @@ int pwmState = LOW;
 int freq = 50;
 const int ledChannel = 0;
 const int resolution = 12;
+int previous_dac_val = 0;
 
 unsigned long previousMillis = 0;
 
 ///////
-//PWM INPUT VARIABLES
-int pwmPin = SLOT_IO0pin; 
+// PWM INPUT VARIABLES
+int pwmPin = SLOT_IO0pin;
 
 unsigned long high1 = 0;
 unsigned long high2 = 0;
@@ -81,7 +84,7 @@ unsigned long high = 0;
 unsigned long microsecForsec = 1000000;
 // unsigned long currentMillis = 0;
 unsigned long prevMillis = 0;
-int printFreqms = 1000; // 1 second. 
+int printFreqms = 1000; // 1 second.
 
 // float dutyCycle = 0.0;
 // float frequency = 0.0;
@@ -93,13 +96,13 @@ int analoglimit = 800;
 bool ishigh = false;
 /////////////
 
-
 int upper_value = 0;
 int lower_value = 0;
-int slot_number;
-int slot_type;
-int ble_state;
-int val;
+int slot_number = 0;
+int slot_type = 0;
+int ble_state = 0;
+int val = 0;
+int dac_boost = 0;
 uint32_t duty = 0;
 
 constexpr uint8_t CORE_TASK_SPI_SLAVE{0};
@@ -111,6 +114,8 @@ struct Config
 {
   // int slot_number_json;
   int slot_type_json;
+  int HW_Version_json;
+  int SW_Version_json;
 };
 
 Config config;
@@ -155,23 +160,24 @@ void setRelays()
   }
 }
 
-void GetPWMDetails(byte pin,int threshold)
+void GetPWMDetails(byte pin)
 {
-  // Let this function be included in the C3 Sketch
-  unsigned long highTime = pulseIn_FEI(pin, HIGH, 50000UL, threshold);  // 50 millisecond timeout
-  unsigned long lowTime = pulseIn_FEI(pin, LOW, 50000UL, threshold);  // 50 millisecond timeout
+  // Using default pulseIn, no threshold needed
+  unsigned long highTime = pulseIn(pin, HIGH, 50000UL); // 50 millisecond timeout
+  unsigned long lowTime = pulseIn(pin, LOW, 50000UL);   // 50 millisecond timeout
 
   // pulseIn() returns zero on timeout
   if (highTime == 0 || lowTime == 0)
-    dutyCycle = get_digital_from_analog(pin, threshold) ? 100 : 0;  // HIGH == 100%,  LOW = 0%
+    dutyCycle = digitalRead(pin) ? 100 : 0; // HIGH == 100%,  LOW = 0%
 
-  dutyCycle = (100 * highTime) / (highTime + lowTime);  // highTime as percentage of total cycle time
+  dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
   frequency = (1 * microsecForsec) / (highTime + lowTime);
   high = highTime;
   low = lowTime;
 }
 
-void pwm_bit_bang_micro(int freq, int pin, int duty_cycle) {
+void pwm_bit_bang_micro(int freq, int pin, int duty_cycle)
+{
   // Calculate the period and high time of the PWM signal.
   int period = 1000000 / freq;
   int high_time = period * duty_cycle / 100;
@@ -181,18 +187,21 @@ void pwm_bit_bang_micro(int freq, int pin, int duty_cycle) {
   unsigned long start_time = micros();
 
   // If the high time has elapsed, set the pin low.
-  if (micros() - start_time >= high_time) {
+  if (micros() - start_time >= high_time)
+  {
     digitalWrite(pin, LOW);
   }
 
   // If the low time has elapsed, set the pin high.
-  if (micros() - start_time >= period) {
+  if (micros() - start_time >= period)
+  {
     digitalWrite(pin, HIGH);
     start_time = micros();
-  }  
+  }
 }
 
-void pwm_bit_bang_millis(int freq, int pin, int duty_cycle) {
+void pwm_bit_bang_millis(int freq, int pin, int duty_cycle)
+{
   // Calculate the period and high time of the PWM signal in milliseconds.
   int period = 1000 / freq;
   int high_time = period * duty_cycle / 100;
@@ -202,21 +211,22 @@ void pwm_bit_bang_millis(int freq, int pin, int duty_cycle) {
   unsigned long start_time = millis();
 
   // If the high time has elapsed, set the pin low.
-  if (millis() - start_time >= high_time) {
+  if (millis() - start_time >= high_time)
+  {
     digitalWrite(pin, LOW);
   }
 
   // If the low time has elapsed, set the pin high.
-  if (millis() - start_time >= period) {
+  if (millis() - start_time >= period)
+  {
     digitalWrite(pin, HIGH);
     start_time = millis();
   }
 }
 
-
 void loadConfiguration(const char *filename, Config &config)
 {
-  Serial.println(F("Checking Config File"));
+  // Serial.println(F("Checking Config File"));
   if (SPIFFS.begin(true))
   {
     File file = SPIFFS.open(filename, "r");
@@ -224,35 +234,39 @@ void loadConfiguration(const char *filename, Config &config)
     DeserializationError error = deserializeJson(doc, file);
     if (error)
     {
-      Serial.println(F("Failed to read file..."));
+      // Serial.println(F("Failed to read file..."));
     }
     // config.slot_number_json = doc["slot_number_json"];
     config.slot_type_json = doc["slot_type_json"];
-    Serial.printf("Retrieved slot type {%d} from config file\n",config.slot_type_json);
+    config.HW_Version_json = doc["HW_Version_json"];
+    config.SW_Version_json = doc["SW_Version_json"];
+    // Serial.printf("Retrieved slot type {%d} from config file\n", config.slot_type_json);
   }
   else
   {
-    Serial.println(F("SPIFFS FAULT"));
+    // Serial.println(F("SPIFFS FAULT"));
   }
 }
 
 void saveConfiguration(const char *filename, const Config &config)
 {
-  Serial.println(F("saving config file..."));
+  // Serial.println(F("saving config file..."));
   if (SPIFFS.begin(true))
   {
     File file = SPIFFS.open(filename, "w");
     if (!file)
     {
-      Serial.println(F("Failed to save config file..."));
+      // Serial.println(F("Failed to save config file..."));
       return;
     }
     StaticJsonDocument<2000> doc;
     // doc["slot_number_json"] = config.slot_number_json;
     doc["slot_type_json"] = config.slot_type_json;
+    doc["SW_Version_json"] = config.SW_Version_json;
+    doc["HW_Version_json"] = config.HW_Version_json;
     if (serializeJson(doc, file) == 0)
     {
-      Serial.println(F("Failed to save config file..."));
+      // Serial.println(F("Failed to save config file..."));
     }
     file.close();
   }
@@ -347,30 +361,30 @@ void task_process_buffer(void *pvParameters)
 void setup()
 {
   Serial.begin(115200);
-  // TODO: Implement JSON to remember previous slot type...
   loadConfiguration(filename, config);
 
   slot_type = config.slot_type_json;
   slot_type_atom.store(slot_type);
-  // slot_number = config.slot_number_json;
-  // if (0 < slot_type < 12)
-  // {
-  //   Serial.printf("Setting LED to color #%d\n",slot_type);
-  //   RGBled.setPixelColor(0, primaryColors[slot_type]);
-  //   RGBled.setBrightness(128);
-  //   RGBled.show();
-  // }
+
 
   // Pin Configuration
   pinMode(SLOT_TP1pin, OUTPUT);
   pinMode(BYPASSpin, OUTPUT);
   pinMode(RELAYpin, OUTPUT);
+  pinMode(DIGI_OUTpin,OUTPUT);
+
+  // I2C setup
+  Wire.begin(SDA, SCL);
 
   // SPI Slave setup
   slave.setDataMode(SPI_MODE0);
   gpio_set_drive_capability((gpio_num_t)ESP_D5, GPIO_DRIVE_CAP_1);
   slave.begin(SPI2_HOST, ESP_D1, ESP_D5, ESP_D2, ESP_D4); // SCLK, MISO, MOSI, SS
   set_buffer();
+
+  RGBled.setPixelColor(0, primaryColors[slot_type]);
+  RGBled.setBrightness(128);
+  RGBled.show();
 
   // Create background tasks/threads (SPI R/W)
   xTaskCreatePinnedToCore(task_wait_spi, "task_wait_spi", 2048, NULL, 2, &task_handle_wait_spi, CORE_TASK_SPI_SLAVE);
@@ -380,265 +394,250 @@ void setup()
 
 void loop()
 {
-  while(1)
+  // perform atomic operations
+  digitalWrite(SLOT_TP1pin, !digitalRead(SLOT_TP1pin));
+  first_run = first_run_atom.load();
+  slot_type = slot_type_atom.load();
+  ble_state = ble_state_atom.load();
+
+  // // handle LED status
+  unsigned long currentMillis = millis();
+
+  // this if/else is a big hit on loop frequency
+  // but why exactly? the rgbled? seems like it......
+  if (ble_enabled)
   {
-    // perform atomic operations
-    digitalWrite(SLOT_TP1pin, !digitalRead(SLOT_TP1pin));
-    first_run = first_run_atom.load();
-    slot_type = slot_type_atom.load();
-    ble_state = ble_state_atom.load();
-
-    // handle LED status
-    unsigned long currentMillis = millis();
-
-    if (ble_enabled)
+    if (currentMillis - previousMillis >= 500)
     {
-      if (currentMillis - previousMillis >= 500)
+      previousMillis = currentMillis;
+      if (blink)
       {
-        previousMillis = currentMillis;
-        if (blink)
-        {
-          RGBled.setPixelColor(0, RGBled.Color(0, 0, 200));
-          RGBled.setBrightness(128);
-          RGBled.show();
-          blink = false;
-        }
-        else
-        {
-          RGBled.setPixelColor(0, RGBled.Color(0, 0, 0));
-          RGBled.setBrightness(128);
-          RGBled.show();
-          blink = true;
-        }
+        RGBled.setPixelColor(0, RGBled.Color(0, 0, 200));
+        RGBled.setBrightness(128);
+        RGBled.show();
+        blink = false;
       }
-    }
-    else
-    {
-      RGBled.setPixelColor(0, primaryColors[slot_type]);
-      RGBled.setBrightness(128);
-      RGBled.show();
-    }
-    unsigned int data;
-    unsigned int data2;
-
-    // Will hit if slot type is updated
-    if (first_run == 1)
-    {
-      // Store Slot type 
-      config.slot_type_json = slot_type;
-      saveConfiguration(filename,config);
-
-      RGBled.setPixelColor(0, RGBled.Color(0, 0, 0));
-      RGBled.setBrightness(0);
-      RGBled.show();
-      // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
-      switch (slot_type)
-      {
-      case 1: // Digital Output
-        pinMode(DIGI_OUTpin, OUTPUT);
-        break;
-      case 2: // Digital Input
-        pinMode(SLOT_IO0pin, INPUT);
-        break;
-      case 3: // Analog Input
-        pinMode(SLOT_IO0pin, INPUT);
-        break;
-      case 4: // Analog Output / DAC
-        Wire.begin(SDA, SCL);
-        dac.begin(0x60);
-        break;
-      case 5: // PWM (input)
-        my_pwm.begin(true); // method 1 (digital)
-        pinMode(SLOT_IO0pin,INPUT);   // method 2 (analog)
-        break;
-      case 6: // Frequency (output)
-        pinMode(DIGI_OUTpin, OUTPUT);
-        ledcAttachPin(DIGI_OUTpin, ledChannel);
-        break;
-      case 7: // n/a
-        break;
-      case 8: // n/a
-        break;
-      case 9: // test bit bang output
-        // pinMode(DIGI_OUTpin, OUTPUT);
-        pinMode(pwmPin,INPUT);
-        break;
-      case 10: // ?
-        Wire.begin(SDA, SCL);
-        dac.begin(0x60);
-        pinMode(DIGI_OUTpin, OUTPUT);
-        break;
-      default:
-        break;
-      }
-      // Mark First run as complete
-      first_run_atom.store(0);
-    }
-
-    switch (slot_type)
-    {
-    case 1:
-      val = pdo2.load();
-      digitalWrite(DIGI_OUTpin, val);
-      data = digitalRead(DIGI_OUTpin);
-      break;
-    case 2:
-      // Do an analog read, set threshold on pi master. if read above threshold, digital high, else low (handled on py side)
-      data = analogRead(SLOT_IO0pin); // pdo 2 output
-      break;
-    case 3:
-      data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
-      // Serial.printf("a2d count: %d\n",data);
-      break;
-    case 4:
-      // data = 4000;
-      upper_value = pdo1.load();
-      lower_value = pdo2.load();
-      val = (upper_value << 8) | lower_value;
-      dac.setVoltage(val, false);
-      data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
-      break;
-    case 5:
-      // digital PWM
-      // data = my_pwm.getValue(); // to pdo1 and 2, good
-      upper_value = pdo1.load();
-      lower_value = pdo2.load();
-      analoglimit = (upper_value << 8) | lower_value;
-      GetPWMDetails(SLOT_IO0pin,analoglimit);
-      // Serial.printf("threshold: %d\n",analoglimit);
-      // Serial.printf("duty: %d\n",dutyCycle);
-      // Serial.printf("frequency: %d\n",frequency);
-      data = dutyCycle;
-      data2 = frequency;
-      break;
-    case 6:
-      // freq value pdo1 and pdo2
-      // pdo 3 = freq_value
-      // pdo 4 = duty_cycle
-      upper_value = pdo1.load();
-      lower_value = pdo2.load();
-      freq_value = (upper_value << 8) | lower_value;
-      upper_value = pdo3.load();
-      lower_value = pdo4.load();
-      duty = (upper_value << 8) | lower_value;
-      data = freq_value;
-      data2 = duty;
-      // Freq output
-      if (freq_value != freq_value_last)
-      {
-        // If Frequency has been changed!
-        freq_value_last = freq_value;
-        ledcDetachPin(DIGI_OUTpin);
-        ledcSetup(ledChannel, freq_value, resolution);
-        ledcAttachPin(DIGI_OUTpin, ledChannel);
-      }
-      if (freq_value >= 200)
-      {
-        // High Speed Freq
-        ledcWrite(ledChannel, duty); // PDO byte 3 4 buffer will set PWM here.
-        // Serial.println("Frequency greater than 200");
-      }
-      else if (freq_value < 200)
-      { 
-        // Low Speed Freq
-        pwm_bit_bang_millis(freq_value,DIGI_OUTpin,duty);
-      }
-      break;
-    case 7:
-      data = 7000;
-      break;
-    case 8:
-      data = 8000;
-      data2 = 9000;
-      // config.slot_type_json = slot_type;
-      // saveConfiguration(filename, config);
-      // first_run = true;
-      delay(500);
-      break;
-    case 9:
-      // TEST: PWM input based on analogRead() - 10-26-2023
-      upper_value = pdo1.load();
-      lower_value = pdo2.load();
-      analoglimit = (upper_value << 8) | lower_value;
-      analogval = analogRead(pwmPin);
-      ishigh = (analogval > analoglimit);
-
-      if(ishigh)
-      {
-          high2 = micros();
-          if(high1 > 0 and low > 0)
-          {
-              highdiff = high2 - high1;
-              frequency = (1000000 / highdiff); // Converging Micro seconds to frequency per second.
-              dutyCycle = ((low - high1) * 100) / highdiff;
-          }
-          low = 0;
-          high1 = high2;
-      }
-      // low
       else
       {
-          low = micros();
+        RGBled.setPixelColor(0, RGBled.Color(0, 0, 0));
+        RGBled.setBrightness(128);
+        RGBled.show();
+        blink = true;
       }
-      currentMillis = millis();
-      if(currentMillis - prevMillis >= printFreqms)
-      {
-          prevMillis = currentMillis; 
-          data = frequency;
-          data2 = dutyCycle;
-      }
+    }
+  }
+  int data;
+  int data2;
+
+  // // Will hit if slot type is updated
+  if (first_run == 1)
+  {
+    // Store Slot type
+    config.slot_type_json = slot_type;
+    saveConfiguration(filename, config);
+
+    // Set pin 19
+    if(slot_type!=6){
+      digitalWrite(DIGI_OUTpin,LOW);
+    }
+    else if(slot_type==6){
+      digitalWrite(DIGI_OUTpin,HIGH);
+    }
+    delay(10);
+    RGBled.setPixelColor(0, primaryColors[slot_type]);
+    RGBled.setBrightness(128);
+    RGBled.show();
+    // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
+    switch (slot_type)
+    {
+    case 1: // Digital Output
       break;
-    case 10:
-      digitalWrite(DIGI_OUTpin, HIGH);
-      delay(20);
-      digitalWrite(DIGI_OUTpin, LOW);
-      delay(20);
+    case 2: // Digital Input
+      pinMode(SLOT_IO0pin, INPUT);
+      break;
+    case 3: // Analog Input
+      pinMode(SLOT_IO0pin, INPUT);
+      break;
+    case 4: // Analog Output / DAC
+      // Wire.begin(SDA, SCL);
+      pinMode(SLOT_IO0pin,INPUT);
+      dac.begin(0x60);
+      break;
+    case 5: // PWM (input)
+      // my_pwm.begin(true);          
+      pinMode(SLOT_IO0pin, INPUT); 
+      break;
+    case 6: // Frequency (output)
+      ledcAttachPin(DIGI_OUTpin, ledChannel);
       break;
     default:
-      data = 0;
       break;
     }
+    // Mark First run as complete
+    first_run_atom.store(0);
+  }
 
-    // Set PDO Output data
-    data_out_atom.store(data);
-    data2_out_atom.store(data2);
-
-    // BLE OTA check
-    if (ble_state == 1 && ble_enabled == false)
-    {
-      // BLE Configuration
-      String slot = "SLOT_";
-      String mac = WiFi.macAddress();
-      ble_enabled = true;
-      RGBled.setPixelColor(0, primaryColors[5]);
-      RGBled.setBrightness(128);
-      ota_dfu_ble.begin(slot + mac);
-      delay(500);
+  switch (slot_type)
+  {
+  case 1:
+    val = pdo2.load();
+    digitalWrite(DIGI_OUTpin, val);
+    data = digitalRead(DIGI_OUTpin);
+    break;
+  case 2:
+    // Do an analog read, set threshold on pi master. if read above threshold, digital high, else low (handled on py side)
+    data = analogRead(SLOT_IO0pin); // pdo 2 output
+    break;
+  case 3:
+    data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
+    // Serial.printf("a2d count: %d\n",data);
+    break;
+  case 4:
+    // Added tracking concept - DAC Output will auto increment until input matches desired output    
+    // Should make this configurable from etherCAT - set data5 either 1 or 0 to control
+    upper_value = pdo1.load();
+    lower_value = pdo2.load();
+    tracking_flag = pdo4.load();
+    val = (upper_value << 8) | lower_value;
+    if (tracking_flag==1){
+      // Serial.print("DAC TRACKING: ");
+      if (val != previous_dac_val){
+        // Serial.print("\n\nNEW VAL\n\n");
+        previous_dac_val = val;
+        dac_boost = 0;
+      }
+      int final_val = val+dac_boost;
+      if(final_val < 0){final_val = 0;}else if(final_val > 4096){final_val = 4095;}
+      // Serial.printf("Setting DAC to: %d\n",final_val);
+      dac.setVoltage(final_val, false);
+      data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
+      if (data < val){
+        // Serial.printf("Expected: %d, Actual: %d - RAISING OUTPUT\n",val,data);
+        dac_boost++;
+      }else if(data > val){
+        // Serial.printf("Expected: %d, Actual: %d - LOWERING OUTPUT\n",val,data);
+        dac_boost--;
+      }else{
+        // Serial.printf("Expected: %d, Actual: %d - OUTPUT ACHEIVED\n",val,data);
+      }
     }
-    else if ((ble_state == 0) && (ble_enabled == true))
-    {
-      RGBled.setPixelColor(0, primaryColors[6]);
-      RGBled.setBrightness(128);
-      ESP.restart(); // if ble is on and received message to turn off, reboot ESP
+    else{
+      // Serial.println("NORMAL DAC");
+      if(val < 0){val = 0;}else if(val > 4096){val = 4096;}
+      dac_boost = 0;
+      dac.setVoltage(val,false);
+      data = analogRead(SLOT_IO0pin);
     }
-    else if (ble_state == 2)
+    break;
+  case 5:
+    // digital PWM
+    // data = my_pwm.getValue(); // to pdo1 and 2, good
+    upper_value = pdo1.load();
+    lower_value = pdo2.load();
+    analoglimit = (upper_value << 8) | lower_value;
+    GetPWMDetails(SLOT_IO0pin);
+    // Serial.printf("threshold: %d\n",analoglimit);
+    // Serial.printf("duty: %d\n",dutyCycle);
+    // Serial.printf("frequency: %d\n",frequency);
+    data = dutyCycle;
+    data2 = frequency;
+    break;
+  case 6:
+    // freq value pdo1 and pdo2
+    // pdo 3 = freq_value
+    // pdo 4 = duty_cycle
+    upper_value = pdo1.load();
+    lower_value = pdo2.load();
+    freq_value = (upper_value << 8) | lower_value;
+    upper_value = pdo3.load();
+    lower_value = pdo4.load();
+    duty = (upper_value << 8) | lower_value;
+    data = freq_value;
+    data2 = duty;
+    // Freq output
+    if (freq_value != freq_value_last)
     {
-      ESP.restart(); // if ble is on and auxdata = 2, reboot ESP
+      // If Frequency has been changed!
+      freq_value_last = freq_value;
+      ledcDetachPin(DIGI_OUTpin);
+      ledcSetup(ledChannel, freq_value, resolution);
+      ledcAttachPin(DIGI_OUTpin, ledChannel);
     }
-
-    // handle relays
-    setRelays();
-
-
-    loopCount++;
-
-    currentMillis = millis();
-    if(currentMillis - prevMillis >= printFreqms)
+    if (freq_value >= 200)
     {
-        Serial.print("Loop per second: ");
-        Serial.println(loopCount);
-        loopCount = 0;
-        prevMillis = currentMillis;
+      // High Speed Freq
+      ledcWrite(ledChannel, duty); // PDO byte 3 4 buffer will set PWM here.
+      // Serial.println("Frequency greater than 200");
     }
-  } 
+    else if (freq_value < 200)
+    {
+      // Low Speed Freq
+      pwm_bit_bang_millis(freq_value, DIGI_OUTpin, duty);
+    }
+    break;
+  default:
+    data = 0;
+    data2 = 0;
+    break;
+  }
+
+  // // Set PDO Output data
+  data_out_atom.store(data);
+  data2_out_atom.store(data2);
+
+  // // BLE OTA check
+  if (ble_state == 1 && ble_enabled == false)
+  {
+    // BLE Configuration
+    String slot = "SLOT_";
+    String mac = WiFi.macAddress();
+    ble_enabled = true;
+    RGBled.setPixelColor(0, primaryColors[5]);
+    RGBled.setBrightness(128);
+    ota_dfu_ble.begin(slot + mac);
+    delay(500);
+  }
+  else if ((ble_state == 0) && (ble_enabled == true))
+  {
+    RGBled.setPixelColor(0, primaryColors[6]);
+    RGBled.setBrightness(128);
+    ESP.restart(); // if ble is on and received message to turn off, reboot ESP
+  }
+  else if (ble_state == 2)
+  {
+    ESP.restart(); // if ble is on and auxdata = 2, reboot ESP
+  }
+
+  // handle relays
+  setRelays();
+
+  // loopCount++;
+
+  //  I2c Scan: found one device at 96 (0x60)
+  // byte count=0;
+  // for (byte i = 8; i < 120; i++)
+  // {
+  //   Wire.beginTransmission (i);          // Begin I2C transmission Address (i)
+  //   if (Wire.endTransmission () == 0)  // Receive 0 = success (ACK response) 
+  //   {
+  //     Serial.print ("Found address: ");
+  //     Serial.print (i, DEC);
+  //     Serial.print (" (0x");
+  //     Serial.print (i, HEX);     // PCF8574 7 bit address
+  //     Serial.println (")");
+  //     count++;
+  //   }
+  // }
+  // Serial.print ("Found ");      
+  // Serial.print (count, DEC);        // numbers of devices
+  // Serial.println (" device(s).");
+
+  // currentMillis = millis();
+  // if (currentMillis - prevMillis >= printFreqms)
+  // {
+  //   Serial.print("Loop per second: ");
+  //   Serial.println(loopCount);
+  //   loopCount = 0;
+  //   prevMillis = currentMillis;
+  // }
 }
