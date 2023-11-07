@@ -103,6 +103,7 @@ int slot_type = 0;
 int ble_state = 0;
 int val = 0;
 int dac_boost = 0;
+bool dac_result = 0;
 uint32_t duty = 0;
 
 constexpr uint8_t CORE_TASK_SPI_SLAVE{0};
@@ -160,7 +161,7 @@ void setRelays()
   }
 }
 
-void GetPWMDetails_FEI(byte pin,int threshold)
+void GetPWMDetails_FEI(byte pin, int threshold)
 {
   // Using default pulseIn, no threshold needed
   unsigned long highTime = pulseIn(pin, HIGH, 50000UL); // 50 millisecond timeout
@@ -168,11 +169,11 @@ void GetPWMDetails_FEI(byte pin,int threshold)
 
   // pulseIn() returns zero on timeout
   if (highTime == 0 || lowTime == 0)
-    dutyCycle = get_digital_from_analog(pin,threshold) ? 100 : 0; // HIGH == 100%,  LOW = 0%
+    dutyCycle = get_digital_from_analog(pin, threshold) ? 100 : 0; // HIGH == 100%,  LOW = 0%
 
-  // Inverted 
+  // Inverted
   // dutyCycle = (100 * highTime) / (highTime + lowTime); // highTime as percentage of total cycle time
-  
+
   // Normal
   dutyCycle = (100 * lowTime) / (highTime + lowTime);
   frequency = (1 * microsecForsec) / (highTime + lowTime);
@@ -370,15 +371,16 @@ void setup()
   slot_type = config.slot_type_json;
   slot_type_atom.store(slot_type);
 
-
   // Pin Configuration
   pinMode(SLOT_TP1pin, OUTPUT);
   pinMode(BYPASSpin, OUTPUT);
   pinMode(RELAYpin, OUTPUT);
-  pinMode(DIGI_OUTpin,OUTPUT);
+  pinMode(DIGI_OUTpin, OUTPUT);
 
   // I2C setup
   Wire.begin(SDA, SCL);
+  dac_result = dac.begin(0x60);
+  Serial.printf("DAC Setup: %d",dac_result);
 
   // SPI Slave setup
   slave.setDataMode(SPI_MODE0);
@@ -407,7 +409,6 @@ void loop()
   // // handle LED status
   unsigned long currentMillis = millis();
 
-
   if (ble_enabled)
   {
     if (currentMillis - previousMillis >= 500)
@@ -430,8 +431,9 @@ void loop()
     }
   }
 
-  int data;
-  int data2;
+  int data = 0;
+  int data2 = 0;
+  // int final_val = 0;
 
   // // Will hit if slot type is updated
   if (first_run == 1)
@@ -440,17 +442,20 @@ void loop()
     config.slot_type_json = slot_type;
     saveConfiguration(filename, config);
     // Set pin 19
-    if(slot_type!=6){
-      digitalWrite(DIGI_OUTpin,LOW);
+    if (slot_type != 6)
+    {
+      digitalWrite(DIGI_OUTpin, LOW);
     }
-    else if(slot_type==6){
-      digitalWrite(DIGI_OUTpin,HIGH);
+    else if (slot_type == 6)
+    {
+      digitalWrite(DIGI_OUTpin, HIGH);
     }
     delay(10);
     RGBled.setPixelColor(0, primaryColors[slot_type]);
     RGBled.setBrightness(128);
     RGBled.show();
     // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
+    
     switch (slot_type)
     {
     case 1: // Digital Output
@@ -463,12 +468,13 @@ void loop()
       break;
     case 4: // Analog Output / DAC
       // Wire.begin(SDA, SCL);
-      pinMode(SLOT_IO0pin,INPUT);
-      dac.begin(0x60);
+      pinMode(SLOT_IO0pin, INPUT);
+      // dac_result = dac.begin(0x60);
+      Serial.printf("DAC Setup: %d",dac_result);
       break;
     case 5: // PWM (input)
-      // my_pwm.begin(true);          
-      pinMode(SLOT_IO0pin, INPUT); 
+      // my_pwm.begin(true);
+      pinMode(SLOT_IO0pin, INPUT);
       break;
     case 6: // Frequency (output)
       ledcAttachPin(DIGI_OUTpin, ledChannel);
@@ -496,31 +502,70 @@ void loop()
     // Serial.printf("a2d count: %d\n",data);
     break;
   case 4:
-    // Added tracking concept - DAC Output will auto increment until input matches desired output 
+    // Added tracking concept - DAC Output will auto increment until input matches desired output
+    Serial.println("CASE 4");
+
     upper_value = pdo1.load();
     lower_value = pdo2.load();
-    tracking_flag = pdo4.load();
-    val = (upper_value << 8) | lower_value;
-    if (tracking_flag==1){
-      if (val != previous_dac_val){
-        previous_dac_val = val;
+    Serial.printf("upper: %d, lower %d\n",upper_value,lower_value);
+
+    if (upper_value > 0 || lower_value > 0)
+    {
+      tracking_flag = pdo4.load();
+      val = (upper_value << 8) | lower_value;
+      Serial.println(val);
+      if (tracking_flag == 1)
+      {
+        if (val != previous_dac_val)
+        {
+          previous_dac_val = val;
+          dac_boost = 0;
+        }
+        int final_val = val + dac_boost;
+        if (final_val < 0)
+        {
+          final_val = 0;
+        }
+        else if (final_val > 4096)
+        {
+          final_val = 4095;
+        }
+        Serial.printf("Setting voltage to %d\n",final_val);
+        Serial.printf("Dac Boost: %d\n",dac_boost);
+        try{
+          dac.setVoltage(final_val, false);
+        }
+        catch(const std::exception &e){Serial.println(e.what());}
+        Serial.println("Voltage Set");
+        data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
+        Serial.printf("analogRead: %d\n",data);
+        if (data < val)
+        {
+          dac_boost++;
+        }
+        else if (data > val)
+        {
+          dac_boost--;
+        }
+      }
+      else
+      {
+        Serial.printf("Else Val: %d\n",val);
+        if (val < 0)
+        {
+          val = 0;
+        }
+        else if (val > 4096)
+        {
+          val = 4096;
+        }
         dac_boost = 0;
+        Serial.println("Setting voltage");
+        dac.setVoltage(val, false);
+        Serial.println("Voltage Set");
+
+        data = analogRead(SLOT_IO0pin);
       }
-      int final_val = val+dac_boost;
-      if(final_val < 0){final_val = 0;}else if(final_val > 4096){final_val = 4095;}
-      dac.setVoltage(final_val, false);
-      data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
-      if (data < val){
-        dac_boost++;
-      }else if(data > val){
-        dac_boost--;
-      }
-    }
-    else{
-      if(val < 0){val = 0;}else if(val > 4096){val = 4096;}
-      dac_boost = 0;
-      dac.setVoltage(val,false);
-      data = analogRead(SLOT_IO0pin);
     }
     break;
   case 5:
@@ -528,7 +573,7 @@ void loop()
     upper_value = pdo1.load();
     lower_value = pdo2.load();
     analoglimit = (upper_value << 8) | lower_value;
-    GetPWMDetails_FEI(SLOT_IO0pin,analoglimit);
+    GetPWMDetails_FEI(SLOT_IO0pin, analoglimit);
     data = dutyCycle;
     data2 = frequency;
     break;
