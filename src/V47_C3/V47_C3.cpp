@@ -14,6 +14,7 @@
 #include <ble_ota.h>
 #include <WiFi.h>
 #include <fei_pwm.h>
+#include <driver/adc.h>
 
 int loopCount = 0;
 
@@ -164,8 +165,8 @@ void setRelays()
 void GetPWMDetails_FEI(byte pin, int threshold)
 {
   // Using default pulseIn, no threshold needed
-  unsigned long highTime = pulseIn(pin, HIGH, 50000UL); // 50 millisecond timeout
-  unsigned long lowTime = pulseIn(pin, LOW, 50000UL);   // 50 millisecond timeout
+  unsigned long highTime = pulseIn_FEI(pin, HIGH, 50000UL,threshold); // 50 millisecond timeout
+  unsigned long lowTime = pulseIn_FEI(pin, LOW, 50000UL,threshold);   // 50 millisecond timeout
 
   // pulseIn() returns zero on timeout
   if (highTime == 0 || lowTime == 0)
@@ -180,6 +181,8 @@ void GetPWMDetails_FEI(byte pin, int threshold)
   high = highTime;
   low = lowTime;
 }
+
+
 
 void pwm_bit_bang_micro(int freq, int pin, int duty_cycle)
 {
@@ -472,7 +475,7 @@ void loop()
       // Wire.begin(SDA, SCL);
       pinMode(SLOT_IO0pin, INPUT);
       dac_result = dac.begin(0x60);
-      Serial.printf("DAC Setup: %d",dac_result);
+      // Serial.printf("DAC Setup: %d",dac_result);
       break;
     case 5: // PWM (input)
       // my_pwm.begin(true);
@@ -607,7 +610,7 @@ void loop()
     break;
   }
 
-  // // Set PDO Output data
+  // Set PDO Output data
   data_out_atom.store(data);
   data2_out_atom.store(data2);
 
