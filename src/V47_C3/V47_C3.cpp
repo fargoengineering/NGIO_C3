@@ -379,8 +379,8 @@ void setup()
 
   // I2C setup
   Wire.begin(SDA, SCL);
-  dac_result = dac.begin(0x60);
-  Serial.printf("DAC Setup: %d",dac_result);
+  // dac_result = dac.begin(0x60);
+  // Serial.printf("DAC Setup: %d",dac_result);
 
   // SPI Slave setup
   slave.setDataMode(SPI_MODE0);
@@ -396,6 +396,9 @@ void setup()
   xTaskCreatePinnedToCore(task_wait_spi, "task_wait_spi", 2048, NULL, 2, &task_handle_wait_spi, CORE_TASK_SPI_SLAVE);
   xTaskNotifyGive(task_handle_wait_spi);
   xTaskCreatePinnedToCore(task_process_buffer, "task_process_buffer", 2048, NULL, 2, &task_handle_process_buffer, CORE_TASK_PROCESS_BUFFER);
+
+  // Make sure we run first run case right away!
+  first_run_atom.store(1);
 }
 
 void loop()
@@ -431,11 +434,10 @@ void loop()
     }
   }
 
+  // these are used to store any values we want to send to the S3 over SPI
   int data = 0;
   int data2 = 0;
-  // int final_val = 0;
-
-  // // Will hit if slot type is updated
+  
   if (first_run == 1)
   {
     // Store Slot type
@@ -454,8 +456,8 @@ void loop()
     RGBled.setPixelColor(0, primaryColors[slot_type]);
     RGBled.setBrightness(128);
     RGBled.show();
-    // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
     
+    // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
     switch (slot_type)
     {
     case 1: // Digital Output
@@ -469,7 +471,7 @@ void loop()
     case 4: // Analog Output / DAC
       // Wire.begin(SDA, SCL);
       pinMode(SLOT_IO0pin, INPUT);
-      // dac_result = dac.begin(0x60);
+      dac_result = dac.begin(0x60);
       Serial.printf("DAC Setup: %d",dac_result);
       break;
     case 5: // PWM (input)
@@ -507,9 +509,9 @@ void loop()
 
     upper_value = pdo1.load();
     lower_value = pdo2.load();
-    Serial.printf("upper: %d, lower %d\n",upper_value,lower_value);
+    // Serial.printf("upper: %d, lower %d\n",upper_value,lower_value);
 
-    if (upper_value > 0 || lower_value > 0)
+    if ((upper_value > 0 || lower_value > 0) && dac_result == 1)
     {
       tracking_flag = pdo4.load();
       val = (upper_value << 8) | lower_value;
@@ -530,15 +532,8 @@ void loop()
         {
           final_val = 4095;
         }
-        Serial.printf("Setting voltage to %d\n",final_val);
-        Serial.printf("Dac Boost: %d\n",dac_boost);
-        try{
-          dac.setVoltage(final_val, false);
-        }
-        catch(const std::exception &e){Serial.println(e.what());}
-        Serial.println("Voltage Set");
+        dac.setVoltage(final_val, false);
         data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
-        Serial.printf("analogRead: %d\n",data);
         if (data < val)
         {
           dac_boost++;
@@ -550,7 +545,6 @@ void loop()
       }
       else
       {
-        Serial.printf("Else Val: %d\n",val);
         if (val < 0)
         {
           val = 0;
@@ -560,10 +554,7 @@ void loop()
           val = 4096;
         }
         dac_boost = 0;
-        Serial.println("Setting voltage");
         dac.setVoltage(val, false);
-        Serial.println("Voltage Set");
-
         data = analogRead(SLOT_IO0pin);
       }
     }
