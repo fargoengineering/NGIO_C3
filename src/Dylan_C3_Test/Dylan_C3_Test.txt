@@ -1,5 +1,5 @@
-#include <ESP32SPISlave.h>
 #include <Arduino.h>
+#include <ESP32SPISlave.h>
 #include <Adafruit_BusIO_Register.h>
 #include <atomic>
 #include <Adafruit_NeoPixel.h>
@@ -128,29 +128,29 @@ Config config;
 
 uint32_t primaryColors[10] = {
     // SWAP RED AND GREEN (G,R,B) for slot boards V1
-    // RGBled.Color(0, 0, 0),       // 0 off
-    // RGBled.Color(0, 255, 0),     // 1 Red
-    // RGBled.Color(255, 255, 255), // 2 White
-    // RGBled.Color(0, 128, 128),   // 3 Purple
-    // RGBled.Color(140, 255, 0),   // Orange
-    // RGBled.Color(0, 0, 255),     // Blue
-    // RGBled.Color(255, 0, 0),     // Green
-    // RGBled.Color(105, 255, 180), // Pink
-    // RGBled.Color(255, 255, 0),   // Yellow
-    // RGBled.Color(128, 0, 128)    // Brown
+    RGBled.Color(0, 0, 0),       // 0 off
+    RGBled.Color(0, 255, 0),     // 1 Red
+    RGBled.Color(255, 255, 255), // 2 White
+    RGBled.Color(0, 128, 128),   // 3 Purple
+    RGBled.Color(140, 255, 0),   // Orange
+    RGBled.Color(0, 0, 255),     // Blue
+    RGBled.Color(255, 0, 0),     // Green
+    RGBled.Color(105, 255, 180), // Pink
+    RGBled.Color(255, 255, 0),   // Yellow
+    RGBled.Color(128, 0, 128)    // Brown
 
     // With correct order (R,G,B): 
     // Seems to be correct with V2 Slot boards...
-    RGBled.Color(0, 0, 0),       // 0 off
-    RGBled.Color(255, 0, 0),     // 1 Red
-    RGBled.Color(255, 255, 255), // 2 White
-    RGBled.Color(128, 0, 128),   // 3 Purple
-    RGBled.Color(255, 140, 0),   // Orange
-    RGBled.Color(0, 0, 255),     // Blue
-    RGBled.Color(0, 255, 0),     // Green
-    RGBled.Color(255, 105, 180), // Pink
-    RGBled.Color(255, 255, 0),   // Yellow
-    RGBled.Color(0, 128, 128)    // Brown
+    // RGBled.Color(0, 0, 0),       // 0 off
+    // RGBled.Color(255, 0, 0),     // 1 Red
+    // RGBled.Color(255, 255, 255), // 2 White
+    // RGBled.Color(128, 0, 128),   // 3 Purple
+    // RGBled.Color(255, 140, 0),   // Orange
+    // RGBled.Color(0, 0, 255),     // Blue
+    // RGBled.Color(0, 255, 0),     // Green
+    // RGBled.Color(255, 105, 180), // Pink
+    // RGBled.Color(255, 255, 0),   // Yellow
+    // RGBled.Color(0, 128, 128)    // Brown
 };
 
 void setRelays()
@@ -422,8 +422,14 @@ void setup()
   first_run_atom.store(1);
 }
 
+
+// these are used to store any values we want to send to the S3 over SPI
+int data = 0;
+int data2 = 0;
+unsigned long currentMillis;
 void loop()
 {
+  before = micros();
   // perform atomic operations
   digitalWrite(SLOT_TP1pin, !digitalRead(SLOT_TP1pin));
   first_run = first_run_atom.load();
@@ -432,7 +438,7 @@ void loop()
 
   Serial.printf("Slot Type: %d\n",slot_type);
   // // handle LED status
-  unsigned long currentMillis = millis();
+  currentMillis = millis();
 
   if (ble_enabled)
   {
@@ -456,9 +462,6 @@ void loop()
     }
   }
 
-  // these are used to store any values we want to send to the S3 over SPI
-  int data = 0;
-  int data2 = 0;
   
   if (first_run == 1)
   {
@@ -633,12 +636,14 @@ void loop()
   case 7:
     // FreqOut using DAC
     // duty cycle should be 0 - 100 %
-    upper_value = pdo1.load();
-    lower_value = pdo2.load();
-    freq_value = (upper_value << 8) | lower_value;
-    upper_value = pdo3.load();
-    lower_value = pdo4.load();
-    duty = (upper_value << 8) | lower_value;
+    // upper_value = pdo1.load();
+    // lower_value = pdo2.load();
+    // freq_value = (upper_value << 8) | lower_value;
+    // upper_value = pdo3.load();
+    // lower_value = pdo4.load();
+    // duty = (upper_value << 8) | lower_value;
+    freq_value = 100;
+    duty = 20;
     data = freq_value;
     data2 = duty;
     togglePinNonBlocking(freq_value,duty);
@@ -678,4 +683,9 @@ void loop()
 
   // handle relays
   setRelays();
+
+  after = micros();
+
+  total = after - before;
+  Serial.printf("Took %d micros to loop\n",total);
 }
