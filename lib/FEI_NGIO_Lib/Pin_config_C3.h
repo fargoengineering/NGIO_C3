@@ -16,7 +16,7 @@
 #define SDA 8
 
 // UNIVERSAL IO V1
-#define RELAYpin 6
-#define BYPASSpin 18
+#define RELAYpin 6      // Open Circuit
+#define BYPASSpin 18    // Bypass Relay
 #define DIGI_OUTpin 19  // freq out
-#define SLOT_TP1pin 1
+#define SLOT_TP1pin 1   // Output Relay    

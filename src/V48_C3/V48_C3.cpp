@@ -47,6 +47,7 @@ std::atomic<int> pdo2(0);             // PDO 2 Output
 std::atomic<int> pdo3(0);             // PDO 3 Output
 std::atomic<int> pdo4(0);             // PDO 4 Output
 std::atomic<int> relay_state_atom(0); // Holds state of the relays
+std::atomic<int> command_atom(0);     // Holds Command Byte when applicable
 std::atomic<bool> first_run_atom(0);  // Marks run setup flag
 std::atomic<int> HW_Version_atom(0);  // Hardware Version
 std::atomic<int> SW_Version_atom(0);  // Software Version
@@ -90,6 +91,7 @@ int upper_value = 0;
 int lower_value = 0;
 int slot_number = 0;
 int slot_type = 0;
+int loop_command = 0;
 int ble_state = 0;
 int val = 0;
 int dac_boost = 0;
@@ -340,7 +342,11 @@ void task_process_buffer(void *pvParameters)
             valid_data = true;
         }
 
-        if (command == 5 && (slot_type_atom.load() != spi_slave_rx_buf[5]))
+        if (command == 1 && (slot_type_atom.load() != spi_slave_rx_buf[5])){
+            slot_type_atom.store(spi_slave_rx_buf[5]);
+            command_atom.store(1);
+        }
+        else if (command == 5 && (slot_type_atom.load() != spi_slave_rx_buf[5]))
         {
             first_run_atom.store(1);
             slot_type_atom.store(spi_slave_rx_buf[5]);
@@ -423,6 +429,7 @@ void loop()
     first_run = first_run_atom.load();
     slot_type = slot_type_atom.load();
     ble_state = ble_state_atom.load();
+    loop_command = command_atom.load();
 
     if (ble_enabled)
     {
@@ -453,8 +460,10 @@ void loop()
     if (first_run == 1)
     {
         // Store Slot type
-        config.slot_type_json = slot_type;
-        saveConfiguration(filename, config);
+        if(loop_command != 1){  // do not write to flash if we are in light show mode.
+            config.slot_type_json = slot_type;
+            saveConfiguration(filename, config);
+        }
         // Set pin 19
         if (slot_type != 6)
         {
@@ -464,7 +473,7 @@ void loop()
         {
             digitalWrite(DIGI_OUTpin, HIGH);
         }
-        delay(10);
+        delayMicroseconds(100);
         RGBled.setPixelColor(0, primaryColors[slot_type]);
         RGBled.setBrightness(128);
         RGBled.show();
