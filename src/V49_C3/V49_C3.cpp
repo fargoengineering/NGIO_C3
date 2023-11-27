@@ -15,17 +15,10 @@
 #include <WiFi.h>
 #include <fei_pwm.h>
 #include <driver/adc.h>
-#include "RS-FEC.h"
 
 int loopCount = 0;
-const int msglen = 8;
-const uint8_t ECC_LENGTH = 4;
-RS::ReedSolomon<msglen, ECC_LENGTH> rs;  //leng ECC leng
-uint8_t dataDecoded[msglen];
-uint8_t dataEncoded[ECC_LENGTH + msglen];
-uint8_t dataAckRaw[msglen];
-uint8_t dataAckEncoded[ECC_LENGTH + msglen];
-const char VERSION[] = "V5_C3";
+
+const char VERSION[] = "V4_C3";
 const char *filename = "/config.txt";
 ESP32SPISlave slave;
 Adafruit_NeoPixel RGBled = Adafruit_NeoPixel(1, 10, NEO_GRB + NEO_KHZ800); // on pin10
@@ -321,84 +314,74 @@ void task_wait_spi(void *pvParameters)
 
 void task_process_buffer(void *pvParameters)
 {
-  while (1)
-  {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-    memcpy(dataEncoded, spi_slave_rx_buf, ECC_LENGTH + msglen);
-
-    memset(dataDecoded, 0x00, msglen);
-    rs.Decode(dataEncoded,dataDecoded);
-
-    bool dataWasCorrected = false;
-
-    for(size_t i=0;i<msglen;++i){
-      if(dataDecoded[i]!=dataEncoded[i])
-        dataWasCorrected = true;    
-    }
-
-    // if(dataWasCorrected && dataDecoded[0] != 0)
-    //   Serial.println("Data was corrected");
-    if(dataDecoded[0]!=0){    // if checksum[0] == '$'
-      uint16_t checkSum = crc.checksumCalculator(dataDecoded,6);
-      uint16_t checkSumFromS3 = dataDecoded[6] + (dataDecoded[7] << 8);
-
-      if(checkSumFromS3 == checkSum){
-        newDataAvail = true;
-        memset(dataAckRaw, 0x00, msglen);
-        dataAckRaw[0] = checkSum;
-        dataAckRaw[1] = checkSum >> 8;
-        memset(dataAckEncoded, 0x00, ECC_LENGTH + msglen);
-        rs.Encode(dataAckRaw, dataAckEncoded);
-        memcpy(spi_slave_tx_buf, dataAckEncoded, ECC_LENGTH + msglen);//ONLY DO THIS HERE!!!! Don't touch tx buff
-      }else{
-        // Serial.println("FAIL_CHECK");
-      }
-    }else if (dataDecoded[0] == 0){
-      // Serial.println("FAIL_CORRUPT");
-    }
-
-    slave.pop();
-    xTaskNotifyGive(task_handle_wait_spi);
-
-//////////////////////////////
-    uint16_t checkSumFromS3 = spi_slave_rx_buf[6] + (spi_slave_rx_buf[7] << 8);
-    uint16_t checkSumOfS3 = crc.checksumCalculator(spi_slave_rx_buf, 6);
-    uint16_t data = data_out_atom.load();    
-    int command = 0;
-
-    if (checkSumOfS3 == checkSumFromS3 && checkSumFromS3 != 0)
+    while (1)
     {
-      command = spi_slave_rx_buf[0];
-      spi_slave_tx_buf[0] = spi_slave_rx_buf[0];
-      spi_slave_tx_buf[1] = data;
-      spi_slave_tx_buf[2] = data >> 8;
-      spi_slave_tx_buf[3] = spi_slave_rx_buf[3]; // data2
-      spi_slave_tx_buf[4] = spi_slave_rx_buf[4]; // data2 >> 8
-      spi_slave_tx_buf[5] = spi_slave_rx_buf[5]; // data3
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-      uint16_t checkSumOfC3 = crc.checksumCalculator(spi_slave_tx_buf, 6);
-      spi_slave_tx_buf[6] = checkSumOfC3;
-      spi_slave_tx_buf[7] = checkSumOfC3 >> 8;
-    }
-    
-    if (command == 5 && (slot_type_atom.load() != spi_slave_rx_buf[5]))
-    { 
-      first_run_atom.store(1);
-      slot_type_atom.store(spi_slave_rx_buf[5]);      
-    }
-    else if (command == 6)
-    {
-      ble_state_atom.store(spi_slave_rx_buf[5]);
-    }
-    pdo1.store(spi_slave_rx_buf[1]);
-    pdo2.store(spi_slave_rx_buf[2]);
-    pdo3.store(spi_slave_rx_buf[3]);
-    pdo4.store(spi_slave_rx_buf[4]);
-    slave.pop();
+        uint16_t checkSumFromS3 = spi_slave_rx_buf[6] + (spi_slave_rx_buf[7] << 8);
+        uint16_t checkSumOfS3 = crc.checksumCalculator(spi_slave_rx_buf, 6);
+        uint16_t data = data_out_atom.load();
+        uint16_t data2 = data2_out_atom.load();
+        int command = 0;
+        bool valid_data = false;
 
-    xTaskNotifyGive(task_handle_wait_spi);
-  }
+        if (checkSumOfS3 == checkSumFromS3 && checkSumFromS3 != 0)
+        {
+            command = spi_slave_rx_buf[0];
+            spi_slave_tx_buf[0] = spi_slave_rx_buf[0];
+            spi_slave_tx_buf[1] = data;
+            spi_slave_tx_buf[2] = data >> 8;
+            spi_slave_tx_buf[3] = data2;
+            spi_slave_tx_buf[4] = data2 >> 8;
+            spi_slave_tx_buf[5] = spi_slave_rx_buf[5]; // data3
+
+            uint16_t checkSumOfC3 = crc.checksumCalculator(spi_slave_tx_buf, 6);
+            spi_slave_tx_buf[6] = checkSumOfC3;
+            spi_slave_tx_buf[7] = checkSumOfC3 >> 8;
+
+            valid_data = true;
+        }
+
+        if (command == 1 && (slot_type_atom.load() != spi_slave_rx_buf[5])){
+            first_run_atom.store(1);
+            slot_type_atom.store(spi_slave_rx_buf[5]);
+            command_atom.store(1);
+        }
+        else if (command == 5 && (slot_type_atom.load() != spi_slave_rx_buf[5]))
+        {   
+            command_atom.store(5);
+            first_run_atom.store(1);
+            slot_type_atom.store(spi_slave_rx_buf[5]);
+        }
+        else if (command == 6)
+        {
+            command_atom.store(6);
+            ble_state_atom.store(spi_slave_rx_buf[5]);
+        }
+        else if (command == 7)
+        {
+            command_atom.store(7);
+            relay_state_atom.store(spi_slave_rx_buf[5]);
+        }
+
+        if (valid_data)
+        {
+            // Serial.printf("pdo1: %d\n",spi_slave_rx_buf[1]);
+            pdo1.store(spi_slave_rx_buf[1]);
+
+            // Serial.printf("pdo2: %d\n",spi_slave_rx_buf[2]);
+            pdo2.store(spi_slave_rx_buf[2]);
+
+            // Serial.printf("pdo3: %d\n",spi_slave_rx_buf[3]);
+            pdo3.store(spi_slave_rx_buf[3]);
+
+            // Serial.printf("pdo4: %d\n",spi_slave_rx_buf[4]);
+            pdo4.store(spi_slave_rx_buf[4]);
+        }
+
+        slave.pop();
+        xTaskNotifyGive(task_handle_wait_spi);
+    }
 }
 
 void setup()
@@ -443,6 +426,7 @@ void setup()
 int data = 0;
 int data2 = 0;
 unsigned long currentMillis;
+
 void loop()
 {
     // perform atomic operations
@@ -494,6 +478,7 @@ void loop()
         {
             digitalWrite(DIGI_OUTpin, HIGH);
         }
+        
         delayMicroseconds(100);
         RGBled.setPixelColor(0, primaryColors[slot_type]);
         RGBled.setBrightness(128);
