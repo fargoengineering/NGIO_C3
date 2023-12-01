@@ -15,10 +15,18 @@
 #include <WiFi.h>
 #include <fei_pwm.h>
 #include <driver/adc.h>
+#include "RS-FEC.h"  
 
 int loopCount = 0;
-
-const char VERSION[] = "V4_C3";
+const int msglen = 8;
+const uint8_t ECC_LENGTH = 4;
+RS::ReedSolomon<msglen, ECC_LENGTH> rs;  //leng ECC leng
+uint8_t dataDecoded[msglen];
+//uint8_t dataDecoded[msglen];
+uint8_t dataEncoded[ECC_LENGTH + msglen];
+uint8_t dataAckRaw[msglen];
+uint8_t dataAckEncoded[ECC_LENGTH + msglen];
+const char VERSION[] = "V52_C3";
 const char *filename = "/config.txt";
 ESP32SPISlave slave;
 Adafruit_NeoPixel RGBled = Adafruit_NeoPixel(1, 10, NEO_GRB + NEO_KHZ800); // on pin10
@@ -300,81 +308,102 @@ void task_wait_spi(void *pvParameters)
     }
 }
 
-void task_process_buffer(void *pvParameters)
-{
-    while (1)
-    {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+void task_process_buffer(void* pvParameters) {
+  while (1) {
 
-        uint16_t checkSumFromS3 = spi_slave_rx_buf[6] + (spi_slave_rx_buf[7] << 8);
-        uint16_t checkSumOfS3 = crc.checksumCalculator(spi_slave_rx_buf, 6);
-        uint16_t data = data_out_atom.load();
-        uint16_t data2 = data2_out_atom.load();
-        int command = 0;
-        bool valid_data = false;
-
-        if(spi_slave_rx_buf[0] != 0){
-            Serial.print("From S3: [");
-            for(int i =0; i<8; i++){
-                Serial.printf("%d, ",spi_slave_rx_buf[i]);
-            }
-            Serial.printf("] \n");
-        }
-
-        if (checkSumOfS3 == checkSumFromS3 && checkSumFromS3 != 0)
-        {
-            command = spi_slave_rx_buf[0];
-            spi_slave_tx_buf[0] = spi_slave_rx_buf[0];
-            spi_slave_tx_buf[1] = data;
-            spi_slave_tx_buf[2] = data >> 8;
-            spi_slave_tx_buf[3] = data2;
-            spi_slave_tx_buf[4] = data2 >> 8;
-            spi_slave_tx_buf[5] = spi_slave_rx_buf[5]; // data3
-
-            uint16_t checkSumOfC3 = crc.checksumCalculator(spi_slave_tx_buf, 6);
-            spi_slave_tx_buf[6] = checkSumOfC3;
-            spi_slave_tx_buf[7] = checkSumOfC3 >> 8;
-
-            valid_data = true;
-        }
-
-        if (command == 1 && (slot_type_atom.load() != spi_slave_rx_buf[5])){
-            slot_type_atom.store(spi_slave_rx_buf[5]);
-            command_atom.store(1);
-        }
-        else if (command == 5 && (slot_type_atom.load() != spi_slave_rx_buf[5]))
-        {
-            first_run_atom.store(1);
-            slot_type_atom.store(spi_slave_rx_buf[5]);
-        }
-        else if (command == 6)
-        {
-            ble_state_atom.store(spi_slave_rx_buf[5]);
-        }
-        else if (command == 7)
-        {
-            relay_state_atom.store(spi_slave_rx_buf[5]);
-        }
-
-        if (valid_data)
-        {
-            pdo1.store(spi_slave_rx_buf[1]);
-            pdo2.store(spi_slave_rx_buf[2]);
-            pdo3.store(spi_slave_rx_buf[3]);
-            pdo4.store(spi_slave_rx_buf[4]);
-        }
-
-        slave.pop();
-        xTaskNotifyGive(task_handle_wait_spi);
+    Serial.println("SPI TASK");
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    memcpy(dataEncoded, spi_slave_rx_buf, ECC_LENGTH + msglen);
+    // //decode the entire buffer
+    memset(dataDecoded, 0x00, msglen);
+    rs.Decode(dataEncoded, dataDecoded);  //src dest
+    int command = 0;
+    bool valid_data = false;
+    bool dataWasCorrected = false;
+    printf("RAW DATA DECODED ->");
+    for (size_t i = 0; i < msglen; ++i) {
+      printf("%02x ", dataDecoded[i]);
+      if (dataDecoded[i] != dataEncoded[i])
+        dataWasCorrected = true;
     }
+    printf("\n");
+    if (dataWasCorrected && dataDecoded[0] != 0)
+      Serial.println("!!!DATA WAS CORRECTED!!!!");
+
+    if (dataDecoded[0] != 0) {     //check for valid command
+      uint16_t checkSum = crc.checksumCalculator(dataDecoded, 6);  //only load checksum if LED data
+      uint16_t checksumFromS3 = dataDecoded[6] + (dataDecoded[7] << 8);
+
+      if (checksumFromS3 == checkSum) {  //this is only if data is truly good
+        newDataAvail = true;
+        //Serial.println("PASS");
+        memset(dataAckRaw, 0x00, msglen);
+        dataAckRaw[0] = checkSum;
+        dataAckRaw[1] = checkSum >> 8;
+        memset(dataAckEncoded, 0x00, ECC_LENGTH + msglen);
+        rs.Encode(dataAckRaw, dataAckEncoded);
+        memcpy(spi_slave_tx_buf, dataAckEncoded, ECC_LENGTH + msglen);//ONLY DO THIS HERE!!!! Don't touch tx buff - kevin. //huh?? dont touch tx????
+
+        command = dataDecoded[0];      // get command byte
+        // newLEDdata[1] = dataDecoded[2];  //g  we flip for V2, RGB format
+        // newLEDdata[0] = dataDecoded[3];  //r
+        // newLEDdata[2] = dataDecoded[4];  //b
+
+        valid_data = true;
+      } else {                           //red if check fails on way there
+        //Serial.println("FAIL-CHECK");
+        // newLEDdata[0] = 200;
+        // newLEDdata[1] = 0;
+        // newLEDdata[2] = 0;
+        //Serial.println("failed after");
+      }
+    } else if (dataDecoded[0] == 0) {
+      //Serial.println("FAIL-CORRUPT");
+    }
+
+    if (command == 1 && (slot_type_atom.load() != dataDecoded[5])){
+        first_run_atom.store(1);
+        slot_type_atom.store(dataDecoded[5]);
+        command_atom.store(1);
+    }
+    else if (command == 5 && (slot_type_atom.load() != dataDecoded[5]))
+    {   
+        command_atom.store(5);
+        first_run_atom.store(1);
+        slot_type_atom.store(dataDecoded[5]);
+    }
+    else if (command == 6)
+    {
+        command_atom.store(6);
+        ble_state_atom.store(dataDecoded[5]);
+    }
+    else if (command == 7)
+    {
+        command_atom.store(7);
+        relay_state_atom.store(dataDecoded[5]);
+    }
+
+    if (valid_data)
+    {
+        pdo1.store(dataDecoded[1]);
+        pdo2.store(dataDecoded[2]);
+        pdo3.store(dataDecoded[3]);
+        pdo4.store(dataDecoded[4]);
+    }
+
+    slave.pop();
+    xTaskNotifyGive(task_handle_wait_spi);
+  }
 }
+
 
 void setup()
 {
     Serial.begin(115200);
     delay(100);
+    Serial.println("Setup Started");
     loadConfiguration(filename, config);
-
+    Serial.println("Config Loaded");
     slot_type = config.slot_type_json;
     slot_type_atom.store(slot_type);
 
@@ -404,6 +433,7 @@ void setup()
 
     // Make sure we run first run case right away!
     first_run_atom.store(1);
+    Serial.println("Setup Complete");
 }
 
 // these are used to store any values we want to send to the S3 over SPI
@@ -448,10 +478,9 @@ void loop()
     if (first_run == 1)
     {
         // Store Slot type
-        if(loop_command != 1){  // do not write to flash if we are in light show mode.
-            config.slot_type_json = slot_type;
-            saveConfiguration(filename, config);
-        }
+        // config.slot_type_json = slot_type;
+        // saveConfiguration(filename, config);
+        
         // Set pin 19
         if (slot_type != 6)
         {

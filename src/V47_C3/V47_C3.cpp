@@ -333,6 +333,14 @@ void task_process_buffer(void *pvParameters)
     int command = 0;
     bool valid_data = false;
 
+    if(spi_slave_rx_buf[0] != 0){
+      Serial.print("From S3: [");
+      for(int i =0; i<8; i++){
+          Serial.printf("%d, ",spi_slave_rx_buf[i]);
+      }
+      Serial.printf("] \n");
+    }
+
     if (checkSumOfS3 == checkSumFromS3 && checkSumFromS3 != 0)
     {
       command = spi_slave_rx_buf[0];
@@ -430,7 +438,7 @@ void loop()
   slot_type = slot_type_atom.load();
   ble_state = ble_state_atom.load();
 
-  Serial.printf("Slot Type: %d\n",slot_type);
+  // Serial.printf("Slot Type: %d\n",slot_type);
   // // handle LED status
   unsigned long currentMillis = millis();
 
