@@ -207,12 +207,12 @@ void task_process_buffer(void *pvParameters)
                 memset(dataAckRaw, 0x00, msglen);
                 dataAckRaw[0] = checkSum;
                 dataAckRaw[1] = checkSum >> 8;
-                // dataAckRaw[2] = dataDecoded[0];
-                // dataAckRaw[3] = data;
-                // dataAckRaw[4] = data>>8;
-                // dataAckRaw[5] = data2;
-                // dataAckRaw[6] = data2>>8;
-                // dataAckRaw[7] = dataDecoded[5];
+                dataAckRaw[2] = dataDecoded[0];
+                dataAckRaw[3] = data;
+                dataAckRaw[4] = data>>8;
+                dataAckRaw[5] = data2;
+                dataAckRaw[6] = data2>>8;
+                dataAckRaw[7] = dataDecoded[5];
 
                 memset(dataAckEncoded, 0x00, ECC_LENGTH + msglen);
                 rs.Encode(dataAckRaw, dataAckEncoded);
