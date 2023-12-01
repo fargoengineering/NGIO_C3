@@ -205,14 +205,14 @@ void task_process_buffer(void *pvParameters)
                 uint16_t data2 = data2_out_atom.load();
                 newDataAvail = true;
                 memset(dataAckRaw, 0x00, msglen);
-                dataAckRaw[0] = checkSum;
-                dataAckRaw[1] = checkSum >> 8;
-                dataAckRaw[2] = dataDecoded[0];
-                dataAckRaw[3] = data;
-                dataAckRaw[4] = data>>8;
-                dataAckRaw[5] = data2;
-                dataAckRaw[6] = data2>>8;
-                dataAckRaw[7] = dataDecoded[5];
+                dataAckRaw[0] = dataDecoded[0];
+                dataAckRaw[1] = data;
+                dataAckRaw[2] = data>>8;
+                dataAckRaw[3] = data2;
+                dataAckRaw[4] = data2>>8;
+                dataAckRaw[5] = dataDecoded[5];
+                dataAckRaw[6] = checkSum;
+                dataAckRaw[7] = checkSum >> 8;
 
                 memset(dataAckEncoded, 0x00, ECC_LENGTH + msglen);
                 rs.Encode(dataAckRaw, dataAckEncoded);
@@ -275,7 +275,7 @@ void setup()
     Wire.begin(SDA, SCL);
 
     // Set led to green on setup
-    RGBled.setPixelColor(0, RGBled.Color(0,200,0));
+    RGBled.setPixelColor(0, RGBled.Color(100,0,100));
     RGBled.setBrightness(128);
     RGBled.show();
     slave.setDataMode(SPI_MODE0);
@@ -335,14 +335,14 @@ void loop()
         ota_dfu_ble.begin(slot+mac);
         delay(500);
     }else if((ble_state == 0) && (ble_enabled == true)){
-        ESP.restart();
+        ESP.restart();   // seems to cause issues? But no other way to stop ble...
     }
 
 
     if (newDataAvail)
     {
         newDataAvail = false;
-        RGBled.setPixelColor(0, RGBled.Color(newLEDdata[0], newLEDdata[1], newLEDdata[2])); //
+        RGBled.setPixelColor(0, RGBled.Color(newLEDdata[0], newLEDdata[1], newLEDdata[2]));
         RGBled.show();
     }
 }

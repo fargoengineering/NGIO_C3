@@ -405,7 +405,6 @@ bool BLE_OTA_DFU::begin(String local_name) {
   }
 
   this->configure_OTA(pServer);
-
   // Start advertising
   pServer->getAdvertising()->addServiceUUID(pServiceOTA->getUUID());
   pServer->getAdvertising()->start();
@@ -434,3 +433,4 @@ void BLE_OTA_DFU::send_OTA_DFU(String value) {
   this->pCharacteristic_BLE_OTA_DFU_TX->setValue(value.c_str());
   this->pCharacteristic_BLE_OTA_DFU_TX->notify();
 }
+
