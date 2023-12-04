@@ -62,9 +62,9 @@ std::atomic<int> SW_Version_atom(0);  // Software Version
 
 Adafruit_MCP4725 dac;
 #define DAC_RESOLUTION (12)
+PWM my_pwm(SLOT_IO0pin);
 
 CRC crc;
-PWM my_pwm(SLOT_IO0pin);
 
 const int pwmResolution = 10;
 int freq_value = 0;
