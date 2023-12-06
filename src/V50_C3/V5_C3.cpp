@@ -160,6 +160,38 @@ void pwm_bit_bang_millis(int freq, int pin, int duty_cycle)
     }
 }
 
+void setRelays()
+{
+    int relay_state = relay_state_atom.load();
+    switch (relay_state)
+    {
+    case 0:
+        digitalWrite(RELAYpin, LOW);
+        digitalWrite(BYPASSpin, LOW);
+        break;
+    case 1:
+        digitalWrite(RELAYpin, HIGH);
+        digitalWrite(BYPASSpin, LOW);
+        break;
+    case 2:
+        digitalWrite(RELAYpin, LOW);
+        digitalWrite(BYPASSpin, HIGH);
+        break;
+    case 3:
+        digitalWrite(RELAYpin, HIGH);
+        digitalWrite(BYPASSpin, HIGH);
+        break;
+    case 4: 
+        // Toggles the "Input/Output" Type Pin, not yet present on V2 slot boards.
+        digitalWrite(SLOT_TP1pin,!digitalRead(SLOT_TP1pin));
+        break;
+    case 5: 
+        
+    default:
+        break;
+    }
+}
+
 void GetPWMDetails_FEI(byte pin, int threshold)
 {
     // Using default pulseIn, no threshold needed
@@ -700,6 +732,9 @@ void loop()
     {
         ESP.restart(); // seems to cause issues? But no other way to stop ble...
     }
+
+    // Handle Relay States
+    setRelays();
 
     // Kevin's RGB
     // if (newDataAvail)
