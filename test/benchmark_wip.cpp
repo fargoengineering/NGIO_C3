@@ -16,40 +16,38 @@
 #include <fei_pwm.h>
 #include <driver/adc.h>
 #include "RS-FEC.h"
-#include <Adafruit_NeoPixel.h>
 
-// SPI Variables
 ESP32SPISlave slave;
 const int msglen = 8;
 const uint8_t ECC_LENGTH = 4;
 RS::ReedSolomon<msglen, ECC_LENGTH> rs; // leng ECC leng
 uint8_t dataDecoded[msglen];
+// uint8_t dataDecoded[msglen];
 uint8_t dataEncoded[ECC_LENGTH + msglen];
 uint8_t dataAckRaw[msglen];
 uint8_t dataAckEncoded[ECC_LENGTH + msglen];
+
+#include <Adafruit_NeoPixel.h>
+Adafruit_NeoPixel RGBled = Adafruit_NeoPixel(1, 10, NEO_GRB + NEO_KHZ800); // on pin10
+volatile uint8_t newLEDdata[3];
 volatile bool newDataAvail = false;
 static constexpr uint32_t BUFFER_SIZE{64};
 uint8_t spi_slave_tx_buf[BUFFER_SIZE];
 uint8_t spi_slave_rx_buf[BUFFER_SIZE];
 
-// LED Variables
-Adafruit_NeoPixel RGBled = Adafruit_NeoPixel(1, 10, NEO_GRB + NEO_KHZ800); // on pin10
-volatile uint8_t newLEDdata[3];
-
-// Constant Variables
-const float SW_Version = 5.2;
-const float HW_Version = 2.0;
+const char VERSION[] = "V4_C3";
 const char *filename = "/config.txt";
+
 const int ESP_D1 = 3; // sck io16b
 const int ESP_D2 = 5; // mosi io16a
 const int ESP_D4 = 4; // ss io13a
 const int ESP_D5 = 2; // miso io13b
 const int DIGOUTpin = 19;
 
-
+bool first_run = false;
 // atomics
-std::atomic<uint16_t> data_out_atom(0);    // Data OUT
-std::atomic<uint16_t> data2_out_atom(0);   // Data OUT
+std::atomic<int> data_out_atom(0);    // Data OUT
+std::atomic<int> data2_out_atom(0);   // Data OUT
 std::atomic<int> slot_type_atom(0);   // Slot Type Byte (Aux)
 std::atomic<int> pdo1(0);             // PDO 1 Output
 std::atomic<int> pdo2(0);             // PDO 2 Output
@@ -58,21 +56,19 @@ std::atomic<int> pdo4(0);             // PDO 4 Output
 std::atomic<int> relay_state_atom(0); // Holds state of the relays
 std::atomic<int> command_atom(0);     // Holds Command Byte when applicable
 std::atomic<bool> first_run_atom(0);  // Marks run setup flag
-
-// BLE OTA Variables
+std::atomic<int> HW_Version_atom(0);  // Hardware Version
+std::atomic<int> SW_Version_atom(0);  // Software Version
+// BLE OTA
 std::atomic<int> ble_state_atom(0); // BLE State Byte (Aux)
 bool ble_enabled = false;           // FEI
 int ble_state = 0;
-
 // Loop Variables
-bool first_run = false;
+uint32_t loop_counter = 0;
+int loop_command = 0;
 int upper_value = 0;
 int lower_value = 0;
 int slot_number = 0;
 int slot_type = 0;
-int led_brightness = 0;
-int loop_command = 0;
-int loop_counter = 0;
 int val = 0;
 int dac_boost = 0;
 int input_w_gain = 0;
@@ -90,7 +86,6 @@ int freq = 50;
 const int ledChannel = 0;
 const int resolution = 12;
 int previous_dac_val = 0;
-
 // PWM INPUT VARIABLES
 int pwmPin = SLOT_IO0pin;
 unsigned long high = 0;
@@ -104,8 +99,10 @@ bool ishigh = false;
 
 struct Config
 {
+    int slot_number_json;
     int slot_type_json;
-    int led_brightness_json;
+    int HW_Version_json;
+    int SW_Version_json;
 };
 
 Config config;
@@ -127,7 +124,7 @@ uint32_t primaryColors[10] = {
     // RGBled.Color(128, 0, 128)    // Brown
 
     // With correct order (R,G,B):
-    // For V2 Slot boards...
+    // Seems to be correct with V2 Slot boards...
     RGBled.Color(0, 0, 0),       // 0 off
     RGBled.Color(255, 0, 0),     // 1 Red
     RGBled.Color(255, 255, 255), // 2 White
@@ -273,8 +270,11 @@ void loadConfiguration(const char *filename, Config &config)
         {
             // Serial.println(F("Failed to read file..."));
         }
+        config.slot_number_json = doc["slot_number_json"];
         config.slot_type_json = doc["slot_type_json"];
-        config.led_brightness_json = doc["led_brightness_json"];
+        config.HW_Version_json = doc["HW_Version_json"];
+        config.SW_Version_json = doc["SW_Version_json"];
+        // Serial.printf("Retrieved slot type {%d} from config file\n", config.slot_type_json);
     }
     else
     {
@@ -294,8 +294,10 @@ void saveConfiguration(const char *filename, const Config &config)
             return;
         }
         StaticJsonDocument<2000> doc;
-        doc["led_brightness_json"] = config.led_brightness_json;
+        doc["slot_number_json"] = config.slot_number_json;
         doc["slot_type_json"] = config.slot_type_json;
+        doc["SW_Version_json"] = config.SW_Version_json;
+        doc["HW_Version_json"] = config.HW_Version_json;
         if (serializeJson(doc, file) == 0)
         {
             // Serial.println(F("Failed to save config file..."));
@@ -306,6 +308,9 @@ void saveConfiguration(const char *filename, const Config &config)
 
 void set_buffer()
 {
+    // for (uint32_t i = 0; i < BUFFER_SIZE; i++) {
+    //   spi_slave_tx_buf[i] = (0xFF - i) & 0xFF;
+    // }
     memset(spi_slave_tx_buf, 0, BUFFER_SIZE);
     memset(spi_slave_rx_buf, 0, BUFFER_SIZE);
 }
@@ -321,7 +326,12 @@ void task_wait_spi(void *pvParameters)
     while (1)
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // block until the transaction comes from master
+        // memset(spi_slave_tx_buf,0x00,BUFFER_SIZE);
+        // memcpy(spi_slave_tx_buf, dataAckEncoded, ECC_LENGTH + msglen);  //copy into encoded variable
         slave.wait(spi_slave_rx_buf, spi_slave_tx_buf, BUFFER_SIZE);
+
         xTaskNotifyGive(task_handle_process_buffer);
     }
 }
@@ -330,6 +340,7 @@ void task_process_buffer(void *pvParameters)
 {
     while (1)
     {
+        int command = 0;
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         memcpy(dataEncoded, spi_slave_rx_buf, ECC_LENGTH + msglen);
 
@@ -346,7 +357,7 @@ void task_process_buffer(void *pvParameters)
         }
         // printf("\n");
         if (dataWasCorrected && dataDecoded[0] != 0)
-            Serial.println("!!!DATA WAS CORRECTED!!!!");
+            // Serial.println("!!!DATA WAS CORRECTED!!!!");
 
         if (dataDecoded[0] != 0)
         {                                                           // let first process
@@ -354,7 +365,6 @@ void task_process_buffer(void *pvParameters)
             uint16_t checksumFromS3 = dataDecoded[6] + (dataDecoded[7] << 8);
             uint16_t data = data_out_atom.load();
             uint16_t data2 = data2_out_atom.load();
-            int command = 0;
             bool valid_data = false;
 
             if (checksumFromS3 == checkSum)
@@ -365,31 +375,26 @@ void task_process_buffer(void *pvParameters)
                 // newDataAvail = true;
                 memset(dataAckRaw, 0x00, msglen);
                 command = dataDecoded[0];
-                dataAckRaw[0] = dataDecoded[0];
-                // dataAckRaw[1] = data;
-                // dataAckRaw[2] = data >> 8;
-                // dataAckRaw[3] = data2;
-                // dataAckRaw[4] = data2 >> 8;
-                dataAckRaw[1] = (data >> 8) & 0xFF;
-                dataAckRaw[2] = data & 0xFF;
-                dataAckRaw[3] = (data2 >> 8)  & 0xFF;
-                dataAckRaw[4] = data2 & 0xFF;
-
+                dataAckRaw[0] = command;
+                dataAckRaw[1] = data;
+                dataAckRaw[2] = data >> 8;
+                dataAckRaw[3] = data2;
+                dataAckRaw[4] = data2 >> 8;
                 dataAckRaw[5] = dataDecoded[5];
                 dataAckRaw[6] = checkSum;
                 dataAckRaw[7] = checkSum >> 8;
 
                 memset(dataAckEncoded, 0x00, ECC_LENGTH + msglen);
                 rs.Encode(dataAckRaw, dataAckEncoded);
-                memcpy(spi_slave_tx_buf, dataAckEncoded, ECC_LENGTH + msglen); // ONLY DO THIS HERE!!!! Don't touch tx buff
+                memcpy(spi_slave_tx_buf, dataAckEncoded, ECC_LENGTH + msglen); // ONLY DO THIS HERE!!!! Don't touch tx buff - kevin
 
                 // Kevins Test Code: 
                 // newLEDdata[1] = dataDecoded[2]; // g  we flip for V2, RGB format
                 // newLEDdata[0] = dataDecoded[3]; // r
                 // newLEDdata[2] = dataDecoded[4]; // b
-                // slot_type_atom.store(newLEDdata[2]); dont do this just yet..
 
                 valid_data = true;
+                command_atom.store(dataDecoded[0]);
             }
             else
             { 
@@ -400,26 +405,19 @@ void task_process_buffer(void *pvParameters)
             {
                 first_run_atom.store(1);
                 slot_type_atom.store(dataDecoded[5]);
-                command_atom.store(1);
             }
             else if (command == 5 && (slot_type_atom.load() != dataDecoded[5]))
             {
-                command_atom.store(5);
                 first_run_atom.store(1);
                 slot_type_atom.store(dataDecoded[5]);
             }
             else if (command == 6)
             {
-                command_atom.store(6);
                 ble_state_atom.store(dataDecoded[5]);
             }
             else if (command == 7)
             {
-                command_atom.store(7);
                 relay_state_atom.store(dataDecoded[5]);
-            }
-            else if (command == 8){
-                command_atom.store(8);
             }
 
             if (valid_data)
@@ -444,10 +442,10 @@ void task_process_buffer(void *pvParameters)
     }
 }
 
-
 void setup()
 {
     Serial.begin(115200);
+    Serial.println("Setup Start");
     pinMode(DIGOUTpin, OUTPUT);
     digitalWrite(DIGOUTpin, LOW);
 
@@ -471,23 +469,19 @@ void setup()
     pinMode(RELAYpin, OUTPUT);
     pinMode(DIGI_OUTpin, OUTPUT);
 
-    // JSON 
-    loadConfiguration(filename,config);
-    led_brightness = config.led_brightness_json;
-    slot_type = config.slot_type_json;
-
     // I2C setup
     Wire.begin(SDA, SCL);
 
     // Set led to green on setup
-    RGBled.setPixelColor(0, RGBled.Color(255, 255, 255));
-    RGBled.setBrightness(255);
+    RGBled.setPixelColor(0, RGBled.Color(0, 50, 75));
+    RGBled.setBrightness(128);
     RGBled.show();
     slave.setDataMode(SPI_MODE0);
 
     slave.begin(SPI2_HOST, ESP_D1, ESP_D5, ESP_D2, ESP_D4); // SCLK, MISO, MOSI, SS
     set_buffer();
-    Serial.println("Setup, start SPI Task");
+    Serial.println("Start xTask");
+
     xTaskCreatePinnedToCore(task_wait_spi, "task_wait_spi", 2048, NULL, 2, &task_handle_wait_spi, CORE_TASK_SPI_SLAVE);
     xTaskNotifyGive(task_handle_wait_spi);
 
@@ -501,6 +495,7 @@ void setup()
         CORE_TASK_PROCESS_BUFFER);
 
     first_run_atom.store(1);
+    Serial.println("Setup Complete");
 }
 
 unsigned long previousMillis = 0;
@@ -535,7 +530,7 @@ void loop()
         
         if(slot_type!=0){
             RGBled.setPixelColor(0, primaryColors[slot_type]);
-            RGBled.setBrightness(255);
+            RGBled.setBrightness(128);
             RGBled.show();
         }
 
@@ -698,21 +693,17 @@ void loop()
         data2 = 0;
         break;
     }
-    
-    // Serial.printf("data1 : %d\n",data);
-    // Serial.printf("Loop_count: %d, command: %d\n",loop_counter,loop_command);
 
-    if(loop_command == 8)
-    {
-        loop_counter++; //increment count
-        data = (loop_counter >> 16) & 0xFFFF;
-        data2 = loop_counter & 0xFFFF;
-    }
-    else if (loop_command !=8){
+    Serial.printf("command: %d\n",loop_command);
+
+    if(loop_command==10){
+        loop_counter++;
+        // Serial.printf("Loop Count: %d\n",loop_counter);
+        data = loop_counter & 0xFFFF;   //lower bits
+        data2 = (loop_counter >> 16) & 0xFFFF;  //upper bits
+    }else{
         loop_counter = 0;
-        command_atom.store(5);
     }
-
     // Set PDO Output data
     data_out_atom.store(data);
     data2_out_atom.store(data2);
@@ -726,14 +717,14 @@ void loop()
             if (blink)
             {
                 RGBled.setPixelColor(0, RGBled.Color(0, 0, 200));
-                RGBled.setBrightness(255);
+                RGBled.setBrightness(128);
                 RGBled.show();
                 blink = false;
             }
             else
             {
                 RGBled.setPixelColor(0, RGBled.Color(0, 0, 0));
-                RGBled.setBrightness(255);
+                RGBled.setBrightness(128);
                 RGBled.show();
                 blink = true;
             }
@@ -755,4 +746,13 @@ void loop()
 
     // Handle Relay States
     setRelays();
+
+    // Kevin's RGB
+    // if (newDataAvail)
+    // {
+    //     newDataAvail = false;
+    //     RGBled.setPixelColor(0, RGBled.Color(newLEDdata[0], newLEDdata[1], newLEDdata[2]));
+    //     RGBled.setBrightness(128); // turn down brightness, Kevin had it cranked.
+    //     RGBled.show();
+    // }
 }
