@@ -166,31 +166,42 @@ void pwm_bit_bang_millis(int freq, int pin, int duty_cycle)
 
 void setRelays()
 {
+    // updated as of 12/14/2023
     int relay_state = relay_state_atom.load();
     switch (relay_state)
     {
-    case 0:
+    case 0: // Relays OFF
         digitalWrite(RELAYpin, LOW);
         digitalWrite(BYPASSpin, LOW);
         break;
-    case 1:
+    case 1: // Open Circuit/Relay ON
         digitalWrite(RELAYpin, HIGH);
-        digitalWrite(BYPASSpin, LOW);
         break;
-    case 2:
+    case 2: // Short to Battery
+        dac.setVoltage(4095,false);
+        digitalWrite(RELAYpin, HIGH);
+        // digitalWrite(BYPASSpin, HIGH);
+        delay(10000);
+        digitalWrite(RELAYpin,LOW);
+        break;
+    case 3: // Short to battery
+        dac.setVoltage(0,false);
+        digitalWrite(RELAYpin, HIGH);
+        // digitalWrite(BYPASSpin, HIGH);
+        delay(10000);
         digitalWrite(RELAYpin, LOW);
+        break;
+    case 4: // Bypass
         digitalWrite(BYPASSpin, HIGH);
         break;
-    case 3:
-        digitalWrite(RELAYpin, HIGH);
-        digitalWrite(BYPASSpin, HIGH);
+    case 5: // TURN OFF ALL
+        // Toggles the "Input/Output" Type Pin HIGH, Only on V3 slot boards.
+        digitalWrite(SLOT_TP1pin,HIGH);
         break;
-    case 4: 
-        // Toggles the "Input/Output" Type Pin, not yet present on V2 slot boards.
-        digitalWrite(SLOT_TP1pin,!digitalRead(SLOT_TP1pin));
+    case 6:
+        // Toggles the "Input/Output" Type Pin LOW, Only on V3 slot boards.
+        digitalWrite(SLOT_TP1pin,LOW);
         break;
-    case 5: 
-        
     default:
         break;
     }
@@ -446,7 +457,7 @@ void task_process_buffer(void *pvParameters)
 
 
 void setup()
-{
+{   
     Serial.begin(115200);
     pinMode(DIGOUTpin, OUTPUT);
     digitalWrite(DIGOUTpin, LOW);
@@ -480,7 +491,7 @@ void setup()
     Wire.begin(SDA, SCL);
 
     // Set led to green on setup
-    RGBled.setPixelColor(0, RGBled.Color(255, 255, 255));
+    RGBled.setPixelColor(0, RGBled.Color(0, 0, 255));
     RGBled.setBrightness(255);
     RGBled.show();
     slave.setDataMode(SPI_MODE0);
