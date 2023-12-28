@@ -179,17 +179,17 @@ void setRelays()
         break;
     case 2: // Short to Battery
         dac.setVoltage(4095,false);
-        digitalWrite(RELAYpin, HIGH);
+        digitalWrite(SLOT_TP1pin, HIGH);
         // digitalWrite(BYPASSpin, HIGH);
         delay(10000);
-        digitalWrite(RELAYpin,LOW);
+        digitalWrite(SLOT_TP1pin,LOW);
         break;
-    case 3: // Short to battery
+    case 3: // Short to Ground
         dac.setVoltage(0,false);
-        digitalWrite(RELAYpin, HIGH);
+        digitalWrite(SLOT_TP1pin, HIGH);
         // digitalWrite(BYPASSpin, HIGH);
         delay(10000);
-        digitalWrite(RELAYpin, LOW);
+        digitalWrite(SLOT_TP1pin, LOW);
         break;
     case 4: // Bypass
         digitalWrite(BYPASSpin, HIGH);
