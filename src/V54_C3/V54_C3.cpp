@@ -375,7 +375,7 @@ void task_process_buffer(void *pvParameters)
             Serial.println("!!!DATA WAS CORRECTED!!!!");
 
         if (dataDecoded[0] != 0)
-    {                                                                           // let first process
+        {                                                                           // let first process
             uint16_t checkSum = checksumCalculator(dataDecoded, 6);             // only load checksum if LED data
             uint16_t checksumFromS3 = dataDecoded[6] + (dataDecoded[7] << 8);
             uint16_t data = data_out_atom.load();
@@ -383,7 +383,7 @@ void task_process_buffer(void *pvParameters)
             int command = 0;
             bool valid_data = false;
 
-            if (checksumFromS3 == checkSum)
+            if ((checksumFromS3 == checkSum))
             { // this is only if data is truly good
                 // Assign New Data to dataAckRaw and decode into dataDecoded:
                 // newDataAvail = true;
@@ -420,19 +420,19 @@ void task_process_buffer(void *pvParameters)
                 slot_number = dataDecoded[4];   // data byte 1
                 Serial.printf("Slot Number: %d\n",slot_number);
             }
-            else if (command == 6)
+            else if (command == 6 && valid_data)
             {
                 // Command 6 = Toggle BLE
                 command_atom.store(6);
                 ble_state_atom.store(dataDecoded[5]);
             }
-            else if (command == 7)
+            else if (command == 7 && valid_data)
             {   
                 // Command 7 = Manipulate Relays
                 command_atom.store(7);
                 relay_state_atom.store(dataDecoded[5]);
             }
-            else if (command == 8){
+            else if (command == 8 && valid_data){
                 command_atom.store(8);
             }
             else if (command == 9 && valid_data){
