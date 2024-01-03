@@ -37,8 +37,8 @@ Adafruit_NeoPixel RGBled = Adafruit_NeoPixel(1, 10, NEO_GRB + NEO_KHZ800); // on
 volatile uint8_t newLEDdata[3];
 
 // Constant Variables
-const float SW_Version = 5.2;
-const float HW_Version = 2.0;
+const int SW_Version = 53;
+const int HW_Version = 2;
 const char *filename = "/config.txt";
 const int ESP_D1 = 3; // sck io16b
 const int ESP_D2 = 5; // mosi io16a
@@ -368,9 +368,6 @@ void task_process_buffer(void *pvParameters)
 
             if (checksumFromS3 == checkSum)
             { // this is only if data is truly good
-                // dataAckRaw is the tx_buf
-                uint16_t data = data_out_atom.load();
-                uint16_t data2 = data2_out_atom.load();
                 // newDataAvail = true;
                 memset(dataAckRaw, 0x00, msglen);
                 command = dataDecoded[0];
@@ -543,7 +540,7 @@ void loop()
         switch (slot_type)
         {
         case 1: // Digital Output
-            digitalWrite(SLOT_TP1pin,HIGH);
+            digitalWrite(SLOT_TP1pin,LOW);
             break;
         case 2: // Digital Input
             digitalWrite(SLOT_TP1pin,LOW); 
@@ -565,7 +562,7 @@ void loop()
             pinMode(SLOT_IO0pin, INPUT);
             break;
         case 6: // Frequency (output)
-            digitalWrite(SLOT_TP1pin,HIGH); 
+            digitalWrite(SLOT_TP1pin,LOW); 
             ledcAttachPin(DIGI_OUTpin, ledChannel);
             break;
         case 7: // Analog Output / DAC
@@ -700,8 +697,8 @@ void loop()
         togglePinNonBlocking(freq_value, duty);
         break;
     default:
-        data = 0;
-        data2 = 0;
+        data = HW_Version;
+        data2 = SW_Version;
         break;
     }
     

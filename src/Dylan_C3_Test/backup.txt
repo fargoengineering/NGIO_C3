@@ -537,11 +537,10 @@ void loop()
         }
 
         // this switch case was originally in setup(), but first_run allows us to reconfigure without power cycling
-        // In context of FEI testing, third relay should be activated only for DAC OUTPUT
         switch (slot_type)
         {
         case 1: // Digital Output
-            digitalWrite(SLOT_TP1pin,LOW);
+            digitalWrite(SLOT_TP1pin,HIGH);
             break;
         case 2: // Digital Input
             digitalWrite(SLOT_TP1pin,LOW); 
@@ -555,7 +554,7 @@ void loop()
             // Wire.begin(SDA, SCL);
             digitalWrite(SLOT_TP1pin,HIGH); 
             pinMode(SLOT_IO0pin, INPUT);
-            dac_result = dac.begin(0x64); // 0x60 for V2 slots
+            dac_result = dac.begin(0x60);
             break;
         case 5: // PWM (input)
             // my_pwm.begin(true);
@@ -563,13 +562,13 @@ void loop()
             pinMode(SLOT_IO0pin, INPUT);
             break;
         case 6: // Frequency (output)
-            dac_result = dac.begin(0x64); // 0x60 for V2 slots
-            digitalWrite(SLOT_TP1pin,LOW); 
+            dac_result = dac.begin(0x60);
+            digitalWrite(SLOT_TP1pin,HIGH); 
             ledcAttachPin(DIGI_OUTpin, ledChannel);
             break;
         case 7: // Analog Output / DAC
             digitalWrite(SLOT_TP1pin,LOW);
-            dac.begin(0x64); // 0x60 for V2 slots
+            dac.begin(0x60);
             break;
         default:
             break;
@@ -620,9 +619,7 @@ void loop()
                 {
                     final_val = 4095;
                 }
-                bool result = dac.setVoltage(final_val, false);
-                Serial.print("DAC RESULT = ");
-                Serial.println(result);
+                dac.setVoltage(final_val, false);
                 data = analogRead(SLOT_IO0pin); // pdo 1 and 2 MSB
                 if (data < val)
                 {
@@ -644,9 +641,7 @@ void loop()
                     val = 4096;
                 }
                 dac_boost = 0;
-                bool result = dac.setVoltage(val, false);
-                Serial.print("DAC RESULT = ");
-                Serial.println(result);
+                dac.setVoltage(val, false);
                 data = analogRead(SLOT_IO0pin);
             }
         }
